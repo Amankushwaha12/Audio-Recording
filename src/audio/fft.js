@@ -73,6 +73,23 @@ export function fftRadix2(real, imag) {
 }
 
 /**
+ * In-place Inverse Radix-2 FFT computed via conjugation identity:
+ * IFFT(X) = conj(FFT(conj(X))) / N
+ */
+export function ifftRadix2(real, imag) {
+  const n = real.length;
+  for (let i = 0; i < n; i++) {
+    imag[i] = -imag[i];
+  }
+  fftRadix2(real, imag);
+  const invN = 1 / n;
+  for (let i = 0; i < n; i++) {
+    real[i] *= invN;
+    imag[i] = -imag[i] * invN;
+  }
+}
+
+/**
  * Computes a compact 2D STFT spectrogram matrix for canvas rendering.
  *
  * To keep rendering snappy even on multi-minute recordings, we sample at most

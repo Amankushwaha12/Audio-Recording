@@ -302,13 +302,13 @@ export default function ProcessingRack({
           />
         </StageSection>
 
-        {/* Stage b: Noise gate / noise reduction (bypassed when DeepFilterNet3 handles denoising) */}
+        {/* Stage b: Noise reduction (Spectral Wiener / Gate, or replaced by DeepFilterNet3) */}
         {isDeepFilter ? (
           <div className="py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
             <div>
               <span className="font-mono mr-1.5">b.</span>
               <span className="font-medium text-slate-700 dark:text-slate-300">
-                Noise Gate replaced by DeepFilterNet3
+                Noise Reduction handled by DeepFilterNet3
               </span>
             </div>
             <span className="font-mono text-sky-700 dark:text-cyan-400 shrink-0">Neural</span>
@@ -316,14 +316,41 @@ export default function ProcessingRack({
         ) : (
           <StageSection
             indexLabel="b."
-            title="Noise Gate / Reduction"
-            subtitle="Estimates noise floor & smoothly attenuates quiet pauses"
+            title="Noise Reduction"
+            subtitle="Spectral Wiener removes hiss during speech; Gate silences pauses"
             checked={options.noiseGateEnabled}
             onToggle={(val) => onChangeOption('noiseGateEnabled', val)}
           >
+            <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 dark:bg-[#090D16] rounded border border-slate-200/80 dark:border-slate-800">
+              <button
+                type="button"
+                disabled={!options.noiseGateEnabled}
+                onClick={() => onChangeOption('noiseMode', 'spectral')}
+                className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap cursor-pointer disabled:opacity-40 ${
+                  (options.noiseMode || 'spectral') === 'spectral'
+                    ? 'bg-white dark:bg-slate-800 text-sky-700 dark:text-cyan-300 shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                Spectral Wiener
+              </button>
+              <button
+                type="button"
+                disabled={!options.noiseGateEnabled}
+                onClick={() => onChangeOption('noiseMode', 'gate')}
+                className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap cursor-pointer disabled:opacity-40 ${
+                  options.noiseMode === 'gate'
+                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                Simple Gate
+              </button>
+            </div>
+
             <SliderField
               id="gate-reduction"
-              label="Reduction amount"
+              label="Reduction strength"
               value={options.noiseGateReductionDb}
               displayValue={`-${options.noiseGateReductionDb} dB`}
               min={0}
@@ -332,25 +359,47 @@ export default function ProcessingRack({
               disabled={!options.noiseGateEnabled}
               onChange={(val) => onChangeOption('noiseGateReductionDb', val)}
             />
-            <SliderField
-              id="gate-margin"
-              label="Threshold above floor"
-              value={options.noiseGateMarginDb}
-              displayValue={`+${options.noiseGateMarginDb} dB`}
-              min={2}
-              max={16}
-              step={1}
-              disabled={!options.noiseGateEnabled}
-              onChange={(val) => onChangeOption('noiseGateMarginDb', val)}
-            />
+            {options.noiseMode === 'gate' && (
+              <SliderField
+                id="gate-margin"
+                label="Gate threshold above floor"
+                value={options.noiseGateMarginDb}
+                displayValue={`+${options.noiseGateMarginDb} dB`}
+                min={2}
+                max={16}
+                step={1}
+                disabled={!options.noiseGateEnabled}
+                onChange={(val) => onChangeOption('noiseGateMarginDb', val)}
+              />
+            )}
             {processingReport?.estimatedNoiseFloorDb != null && (
               <p className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                Detected floor: {processingReport.estimatedNoiseFloorDb.toFixed(1)} dBFS · Gate at{' '}
-                {processingReport.gateThresholdDb.toFixed(1)} dBFS
+                Detected noise floor: {processingReport.estimatedNoiseFloorDb.toFixed(1)} dBFS
               </p>
             )}
           </StageSection>
         )}
+
+        {/* Studio Voice Clarity EQ & De-Esser */}
+        <StageSection
+          indexLabel="+"
+          title="Voice Clarity EQ & De-Esser"
+          subtitle="Cuts 260 Hz mud, boosts 3.2 kHz clarity & softens harsh sibilance"
+          checked={Boolean(options.voiceClarityEnabled)}
+          onToggle={(val) => onChangeOption('voiceClarityEnabled', val)}
+        >
+          <SliderField
+            id="voice-clarity"
+            label="Clarity & presence"
+            value={Math.round((options.voiceClarityAmount ?? 0.65) * 100)}
+            displayValue={`${Math.round((options.voiceClarityAmount ?? 0.65) * 100)}%`}
+            min={0}
+            max={100}
+            step={5}
+            disabled={!options.voiceClarityEnabled}
+            onChange={(val) => onChangeOption('voiceClarityAmount', val / 100)}
+          />
+        </StageSection>
 
         {/* Stage c: Compressor */}
         <StageSection

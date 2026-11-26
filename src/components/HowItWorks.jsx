@@ -9,15 +9,15 @@ const STAGES = [
   },
   {
     index: 'b.',
-    name: 'Noise Gate or DeepFilterNet3 Neural Denoising',
+    name: 'Spectral Wiener, Gate, or DeepFilterNet3',
     description:
-      'In Current DSP mode, estimates your room noise floor from the quietest 10% of frames and gates pauses smoothly. Switch to DeepFilterNet3 to run a 48 kHz WebAssembly neural network that suppresses background hiss and hum even while you are actively speaking.',
+      'Choose Spectral Wiener (STFT overlap-add noise suppression that works in pure JS during speech), Simple Gate (silences pauses), or DeepFilterNet3 (48 kHz WASM neural denoising with smart pre-gain and delay alignment).',
   },
   {
     index: 'c.',
-    name: 'Dynamics Compressor',
+    name: 'Voice Clarity EQ, De-Esser & Compressor',
     description:
-      'Watches instantaneous level across linked stereo channels and pulls down loud spikes above the threshold by the chosen ratio, narrowing the gap between loud emphasis and softer words.',
+      'Removes 260 Hz room mud, boosts 3.2 kHz vocal clarity with a split-band de-esser for harsh "s" sounds, then applies soft-knee compression so soft and loud syllables sit evenly.',
   },
   {
     index: 'd.',

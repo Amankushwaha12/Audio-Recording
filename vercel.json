@@ -32,7 +32,7 @@
   ],
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!df_bg\\.wasm\\.bin|assets/).*)",
       "destination": "/index.html"
     }
   ]

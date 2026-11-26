@@ -389,37 +389,57 @@ export default function App() {
       let storageTag = '';
 
       if (processingEngine === 'deepfilternet') {
-        const dfRes = await denoiseWithDeepFilterNet(
-          originalBuffer,
-          dfOptions,
-          (prog) => {
-            const scaledPct = dfOptions.chainMastering
-              ? Math.round(prog.percent * 0.65)
-              : Math.min(96, prog.percent);
-            setProgress({ percent: scaledPct, stage: prog.stage });
-          }
-        );
-
-        if (dfOptions.chainMastering) {
-          const postRes = await processAudioBuffer(
-            dfRes.audioBuffer,
-            { ...options, noiseGateEnabled: false },
+        try {
+          const dfRes = await denoiseWithDeepFilterNet(
+            originalBuffer,
+            dfOptions,
             (prog) => {
-              const scaledPct = Math.round(65 + prog.percent * 0.33);
+              const scaledPct = dfOptions.chainMastering
+                ? Math.round(prog.percent * 0.65)
+                : Math.min(96, prog.percent);
               setProgress({ percent: scaledPct, stage: prog.stage });
             }
           );
-          outBuffer = postRes.audioBuffer;
-          report = { ...postRes.report, deepFilterElapsedMs: dfRes.elapsedMs };
-          const presetPart =
-            activePresetId && PRESETS[activePresetId]
-              ? PRESETS[activePresetId].label
-              : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
-          storageTag = `DeepFilterNet3 + ${presetPart}`;
-        } else {
-          outBuffer = dfRes.audioBuffer;
-          report = { deepFilterElapsedMs: dfRes.elapsedMs };
-          storageTag = `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`;
+
+          if (dfOptions.chainMastering) {
+            const postRes = await processAudioBuffer(
+              dfRes.audioBuffer,
+              { ...options, noiseGateEnabled: false },
+              (prog) => {
+                const scaledPct = Math.round(65 + prog.percent * 0.33);
+                setProgress({ percent: scaledPct, stage: prog.stage });
+              }
+            );
+            outBuffer = postRes.audioBuffer;
+            report = { ...postRes.report, deepFilterElapsedMs: dfRes.elapsedMs };
+            const presetPart =
+              activePresetId && PRESETS[activePresetId]
+                ? PRESETS[activePresetId].label
+                : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
+            storageTag = `DeepFilterNet3 + ${presetPart}`;
+          } else {
+            outBuffer = dfRes.audioBuffer;
+            report = { deepFilterElapsedMs: dfRes.elapsedMs };
+            storageTag = `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`;
+          }
+        } catch (dfErr) {
+          console.warn('DeepFilterNet3 failed, falling back to Studio Spectral Wiener:', dfErr);
+          setErrorMessage(
+            `DeepFilterNet3 WASM could not run here (${dfErr?.message || 'WASM error'}) — automatically completed using Studio Spectral Wiener Denoiser + Mastering instead.`
+          );
+          const fallbackRes = await processAudioBuffer(
+            originalBuffer,
+            {
+              ...options,
+              noiseGateEnabled: true,
+              noiseMode: 'spectral',
+              noiseGateReductionDb: Math.max(18, Math.min(30, Math.round(dfOptions.attenuationLimit * 0.3))),
+            },
+            (prog) => setProgress(prog)
+          );
+          outBuffer = fallbackRes.audioBuffer;
+          report = fallbackRes.report;
+          storageTag = 'Spectral Wiener Fallback';
         }
       } else {
         const res = await processAudioBuffer(originalBuffer, options, (prog) =>

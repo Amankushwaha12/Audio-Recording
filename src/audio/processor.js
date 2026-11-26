@@ -27,6 +27,7 @@ import {
   linearToDb,
   measureBS1770Loudness,
 } from './analyzer.js';
+import { fftRadix2, ifftRadix2 } from './fft.js';
 
 /**
  * Curated mastering presets covering both Current DSP and DeepFilterNet3 engines.
@@ -35,29 +36,32 @@ export const PRESETS = {
   studioAi: {
     id: 'studioAi',
     label: 'Studio AI Master',
-    summary: 'Best all-around: DeepFilterNet3 neural cleanup + -16 LUFS broadcast polish',
+    summary: 'Best quality: DeepFilterNet3 + Voice Clarity EQ + -15 LUFS broadcast loudness',
     recommendedEngine: 'deepfilternet',
     dfOptions: {
-      attenuationLimit: 85,
-      postFilterBeta: 0.02,
+      attenuationLimit: 88,
+      postFilterBeta: 0.025,
       chainMastering: true,
     },
     options: {
       highPassEnabled: true,
       highPassFreq: 85,
       noiseGateEnabled: true,
-      noiseGateReductionDb: 14,
+      noiseMode: 'spectral',
+      noiseGateReductionDb: 18,
       noiseGateMarginDb: 6,
+      voiceClarityEnabled: true,
+      voiceClarityAmount: 0.75,
       compressorEnabled: true,
-      compThresholdDb: -20,
-      compRatio: 2.6,
-      compAttackMs: 10,
-      compReleaseMs: 130,
+      compThresholdDb: -19,
+      compRatio: 2.8,
+      compAttackMs: 8,
+      compReleaseMs: 120,
       levelerEnabled: true,
-      levelerStrength: 0.8,
+      levelerStrength: 0.85,
       normalizeEnabled: true,
       normalizeMode: 'lufs',
-      targetLoudness: -16,
+      targetLoudness: -15,
       limiterCeilingDbtp: -1.0,
       silenceTrimEnabled: false,
       silenceMaxPauseSec: 1.1,
@@ -66,25 +70,28 @@ export const PRESETS = {
   podcast: {
     id: 'podcast',
     label: 'Podcast',
-    summary: '-16 LUFS, light compression, balanced auto-leveler, -1.0 dBTP ceiling',
+    summary: '-16 LUFS, spectral noise cleanup, studio voice clarity, balanced dynamics',
     dfOptions: {
-      attenuationLimit: 65,
-      postFilterBeta: 0.015,
+      attenuationLimit: 70,
+      postFilterBeta: 0.02,
       chainMastering: true,
     },
     options: {
       highPassEnabled: true,
       highPassFreq: 80,
       noiseGateEnabled: true,
-      noiseGateReductionDb: 12,
+      noiseMode: 'spectral',
+      noiseGateReductionDb: 16,
       noiseGateMarginDb: 6,
+      voiceClarityEnabled: true,
+      voiceClarityAmount: 0.65,
       compressorEnabled: true,
       compThresholdDb: -20,
-      compRatio: 2.5,
-      compAttackMs: 12,
-      compReleaseMs: 140,
+      compRatio: 2.6,
+      compAttackMs: 10,
+      compReleaseMs: 135,
       levelerEnabled: true,
-      levelerStrength: 0.75,
+      levelerStrength: 0.8,
       normalizeEnabled: true,
       normalizeMode: 'lufs',
       targetLoudness: -16,
@@ -96,9 +103,9 @@ export const PRESETS = {
   audiobook: {
     id: 'audiobook',
     label: 'Audiobook',
-    summary: 'ACX style: -20 dBFS RMS, gentle leveling, strict -3.0 dBTP peak ceiling',
+    summary: 'ACX style: -20 dBFS RMS, natural voice warmth, strict -3.0 dBTP ceiling',
     dfOptions: {
-      attenuationLimit: 42,
+      attenuationLimit: 45,
       postFilterBeta: 0.01,
       chainMastering: true,
     },
@@ -106,8 +113,11 @@ export const PRESETS = {
       highPassEnabled: true,
       highPassFreq: 75,
       noiseGateEnabled: true,
-      noiseGateReductionDb: 8,
+      noiseMode: 'spectral',
+      noiseGateReductionDb: 10,
       noiseGateMarginDb: 5,
+      voiceClarityEnabled: true,
+      voiceClarityAmount: 0.4,
       compressorEnabled: true,
       compThresholdDb: -22,
       compRatio: 2.0,
@@ -126,9 +136,9 @@ export const PRESETS = {
   youtube: {
     id: 'youtube',
     label: 'YouTube / Reels',
-    summary: 'Punchy -14 LUFS voiceover, crisp 3.2:1 compression, trims pauses >0.8 s',
+    summary: 'Loud & crisp -14 LUFS voiceover, strong clarity EQ, trims pauses >0.8 s',
     dfOptions: {
-      attenuationLimit: 80,
+      attenuationLimit: 85,
       postFilterBeta: 0.025,
       chainMastering: true,
     },
@@ -136,8 +146,11 @@ export const PRESETS = {
       highPassEnabled: true,
       highPassFreq: 85,
       noiseGateEnabled: true,
-      noiseGateReductionDb: 16,
+      noiseMode: 'spectral',
+      noiseGateReductionDb: 20,
       noiseGateMarginDb: 6,
+      voiceClarityEnabled: true,
+      voiceClarityAmount: 0.85,
       compressorEnabled: true,
       compThresholdDb: -18,
       compRatio: 3.2,
@@ -156,9 +169,9 @@ export const PRESETS = {
   broadcast: {
     id: 'broadcast',
     label: 'Broadcast EBU',
-    summary: 'EBU R128 / TV standard: -23 LUFS, natural dynamics, -1.0 dBTP ceiling',
+    summary: 'EBU R128 / TV standard: -23 LUFS, natural clarity, -1.0 dBTP ceiling',
     dfOptions: {
-      attenuationLimit: 50,
+      attenuationLimit: 55,
       postFilterBeta: 0.015,
       chainMastering: true,
     },
@@ -166,8 +179,11 @@ export const PRESETS = {
       highPassEnabled: true,
       highPassFreq: 80,
       noiseGateEnabled: true,
-      noiseGateReductionDb: 10,
+      noiseMode: 'spectral',
+      noiseGateReductionDb: 12,
       noiseGateMarginDb: 5,
+      voiceClarityEnabled: true,
+      voiceClarityAmount: 0.5,
       compressorEnabled: true,
       compThresholdDb: -24,
       compRatio: 2.2,
@@ -186,7 +202,7 @@ export const PRESETS = {
   noisy: {
     id: 'noisy',
     label: 'Noisy Recording',
-    summary: 'Heavy rescue: 100 Hz HPF, max noise reduction, firm leveler, trims >1.0 s',
+    summary: 'Heavy rescue: 100 Hz HPF, max noise suppression, voice clarity, trims >1.0 s',
     dfOptions: {
       attenuationLimit: 100,
       postFilterBeta: 0.035,
@@ -196,18 +212,21 @@ export const PRESETS = {
       highPassEnabled: true,
       highPassFreq: 100,
       noiseGateEnabled: true,
-      noiseGateReductionDb: 24,
-      noiseGateMarginDb: 8,
+      noiseMode: 'spectral',
+      noiseGateReductionDb: 26,
+      noiseGateMarginDb: 7,
+      voiceClarityEnabled: true,
+      voiceClarityAmount: 0.75,
       compressorEnabled: true,
-      compThresholdDb: -22,
-      compRatio: 3.5,
+      compThresholdDb: -21,
+      compRatio: 3.4,
       compAttackMs: 8,
       compReleaseMs: 120,
       levelerEnabled: true,
       levelerStrength: 0.9,
       normalizeEnabled: true,
       normalizeMode: 'lufs',
-      targetLoudness: -16,
+      targetLoudness: -15,
       limiterCeilingDbtp: -1.0,
       silenceTrimEnabled: true,
       silenceMaxPauseSec: 1.0,
@@ -348,6 +367,290 @@ function runNoiseGate(channels, sampleRate, reductionDb, marginDb = 6) {
   }
 
   return { channels: out, noiseFloorDb, thresholdDb };
+}
+
+/**
+ * Stage b (Studio Upgrade): STFT Spectral Wiener / Ephraim-Malah Noise Reduction
+ * Removes continuous fan hum, AC noise, and broadband room hiss *even while
+ * someone is speaking* using 1024-point Hann 50% overlap-add STFT, automatic
+ * per-frequency noise floor profiling (15th percentile across quiet frames),
+ * decision-directed SNR smoothing (eliminates robotic "musical noise"), and
+ * a subtle finishing pause gate so silences stay studio-black.
+ */
+function runSpectralDenoiser(channels, sampleRate, reductionDb = 18) {
+  const numChannels = channels.length;
+  const length = channels[0].length;
+  const fftSize = 1024;
+  const hop = fftSize >> 1; // 50% overlap (512 samples)
+  const halfBins = (fftSize >> 1) + 1;
+
+  // Periodic Hann window for exact COLA (Constant Overlap-Add) reconstruction
+  const win = new Float32Array(fftSize);
+  for (let i = 0; i < fftSize; i++) {
+    win[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / fftSize));
+  }
+  // Using sqrt(Hann) for both analysis and synthesis guarantees exact 1.0 overlap sum
+  const sqrtWin = new Float32Array(fftSize);
+  for (let i = 0; i < fftSize; i++) {
+    sqrtWin[i] = Math.sqrt(win[i]);
+  }
+
+  const minGain = dbToLinear(-Math.max(4, Math.min(36, reductionDb)));
+  const overSub = 1.15 + Math.min(0.85, reductionDb / 30); // Gentle oversubtraction scaled by strength
+  const alphaDD = 0.92; // Decision-directed smoothing prevents musical noise artifacts
+
+  const outChannels = [];
+  let measuredFloorDb = -60;
+
+  for (let ch = 0; ch < numChannels; ch++) {
+    const src = channels[ch];
+    const numFrames = Math.max(1, Math.ceil((length + hop) / hop));
+
+    // Pass 1: Measure per-frame broadband energy to locate quietest 15% of frames
+    const frameEnergy = new Float32Array(numFrames);
+    for (let f = 0; f < numFrames; f++) {
+      const start = f * hop;
+      let sq = 0;
+      let cnt = 0;
+      for (let i = 0; i < fftSize; i++) {
+        const idx = start + i;
+        if (idx < length) {
+          const s = src[idx];
+          sq += s * s;
+          cnt++;
+        }
+      }
+      frameEnergy[f] = cnt > 0 ? sq / cnt : 0;
+    }
+
+    const frameOrder = Array.from({ length: numFrames }, (_, i) => i).filter(
+      (i) => frameEnergy[i] > 1e-11
+    );
+    frameOrder.sort((a, b) => frameEnergy[a] - frameEnergy[b]);
+
+    // Take quietest 15% of frames (at least 4 frames) to estimate noise PSD per bin
+    const quietCount = Math.max(4, Math.min(frameOrder.length, Math.ceil(frameOrder.length * 0.15)));
+    const noisePsd = new Float32Array(halfBins);
+    const real = new Float32Array(fftSize);
+    const imag = new Float32Array(fftSize);
+
+    if (quietCount > 0) {
+      let quietAvgSq = 0;
+      for (let q = 0; q < quietCount; q++) {
+        const fIdx = frameOrder[q];
+        quietAvgSq += frameEnergy[fIdx];
+        const start = fIdx * hop;
+        for (let i = 0; i < fftSize; i++) {
+          const idx = start + i;
+          real[i] = idx < length ? src[idx] * sqrtWin[i] : 0;
+          imag[i] = 0;
+        }
+        fftRadix2(real, imag);
+        for (let b = 0; b < halfBins; b++) {
+          noisePsd[b] += real[b] * real[b] + imag[b] * imag[b];
+        }
+      }
+      for (let b = 0; b < halfBins; b++) {
+        noisePsd[b] = (noisePsd[b] / quietCount) * overSub;
+      }
+      if (ch === 0) {
+        measuredFloorDb = linearToDb(Math.sqrt(quietAvgSq / quietCount));
+      }
+    }
+
+    // Pass 2: Decision-directed Wiener filtering + Overlap-Add synthesis
+    const out = new Float32Array(length);
+    const prevPostSnr = new Float32Array(halfBins).fill(1);
+    const prevGain = new Float32Array(halfBins).fill(1);
+    const binGain = new Float32Array(halfBins);
+    const smoothGain = new Float32Array(halfBins);
+
+    for (let f = 0; f < numFrames; f++) {
+      const start = f * hop;
+      for (let i = 0; i < fftSize; i++) {
+        const idx = start + i;
+        real[i] = idx < length ? src[idx] * sqrtWin[i] : 0;
+        imag[i] = 0;
+      }
+
+      fftRadix2(real, imag);
+
+      for (let b = 0; b < halfBins; b++) {
+        const power = real[b] * real[b] + imag[b] * imag[b];
+        const nPow = Math.max(noisePsd[b], 1e-12);
+        const postSnr = power / nPow;
+
+        // Decision-directed a-priori SNR estimate (Ephraim-Malah)
+        const priorSnr =
+          alphaDD * (prevGain[b] * prevGain[b] * prevPostSnr[b]) +
+          (1 - alphaDD) * Math.max(postSnr - 1, 0);
+
+        // Wiener spectral gain with protective speech floor
+        const wiener = priorSnr / (priorSnr + 1);
+        binGain[b] = Math.max(minGain, Math.min(1, wiener));
+        prevPostSnr[b] = Math.min(postSnr, 50);
+      }
+
+      // 3-bin frequency smoothing suppresses isolated musical-noise pings
+      for (let b = 0; b < halfBins; b++) {
+        const gPrev = binGain[Math.max(0, b - 1)];
+        const gCurr = binGain[b];
+        const gNext = binGain[Math.min(halfBins - 1, b + 1)];
+        const g = 0.15 * gPrev + 0.7 * gCurr + 0.15 * gNext;
+        smoothGain[b] = g;
+        prevGain[b] = g;
+      }
+
+      // Apply symmetric spectral gain to positive and negative frequency halves
+      real[0] *= smoothGain[0];
+      imag[0] *= smoothGain[0];
+      real[fftSize >> 1] *= smoothGain[halfBins - 1];
+      imag[fftSize >> 1] *= smoothGain[halfBins - 1];
+
+      for (let b = 1; b < fftSize >> 1; b++) {
+        const g = smoothGain[b];
+        real[b] *= g;
+        imag[b] *= g;
+        real[fftSize - b] *= g;
+        imag[fftSize - b] *= g;
+      }
+
+      ifftRadix2(real, imag);
+
+      for (let i = 0; i < fftSize; i++) {
+        const idx = start + i;
+        if (idx < length) {
+          out[idx] += real[i] * sqrtWin[i];
+        }
+      }
+    }
+
+    outChannels.push(out);
+  }
+
+  // Subtle finishing gate (-8 dB max on pure dead pauses) for studio-clean silence
+  const polished = runNoiseGate(
+    outChannels,
+    sampleRate,
+    Math.min(10, Math.round(reductionDb * 0.4)),
+    5
+  );
+
+  return {
+    channels: polished.channels,
+    noiseFloorDb: measuredFloorDb,
+    thresholdDb: polished.thresholdDb,
+  };
+}
+
+/**
+ * Helper: RBJ Peaking EQ biquad coefficients.
+ */
+function makePeakingCoeffs(sampleRate, freqHz, gainDb, q) {
+  const f0 = Math.max(20, Math.min(freqHz, sampleRate * 0.45));
+  const A = Math.pow(10, gainDb / 40);
+  const w0 = (2 * Math.PI * f0) / sampleRate;
+  const cosW0 = Math.cos(w0);
+  const alpha = Math.sin(w0) / (2 * q);
+  const a0 = 1 + alpha / A;
+  return {
+    b0: (1 + alpha * A) / a0,
+    b1: (-2 * cosW0) / a0,
+    b2: (1 - alpha * A) / a0,
+    a1: (-2 * cosW0) / a0,
+    a2: (1 - alpha / A) / a0,
+  };
+}
+
+/**
+ * Helper: RBJ High-Shelf EQ biquad coefficients.
+ */
+function makeHighShelfCoeffs(sampleRate, freqHz, gainDb, slope = 0.8) {
+  const f0 = Math.max(100, Math.min(freqHz, sampleRate * 0.45));
+  const A = Math.pow(10, gainDb / 40);
+  const w0 = (2 * Math.PI * f0) / sampleRate;
+  const cosW0 = Math.cos(w0);
+  const sinW0 = Math.sin(w0);
+  const alpha = (sinW0 / 2) * Math.sqrt((A + 1 / A) * (1 / slope - 1) + 2);
+  const twoSqrtAAlpha = 2 * Math.sqrt(A) * alpha;
+  const a0 = A + 1 - (A - 1) * cosW0 + twoSqrtAAlpha;
+  return {
+    b0: (A * (A + 1 + (A - 1) * cosW0 + twoSqrtAAlpha)) / a0,
+    b1: (-2 * A * (A - 1 + (A + 1) * cosW0)) / a0,
+    b2: (A * (A + 1 + (A - 1) * cosW0 - twoSqrtAAlpha)) / a0,
+    a1: (2 * (A - 1 - (A + 1) * cosW0)) / a0,
+    a2: (A + 1 - (A - 1) * cosW0 - twoSqrtAAlpha) / a0,
+  };
+}
+
+/**
+ * Studio Voice Clarity EQ + Split-Band De-Esser
+ * Shapes raw mic recordings into polished broadcast vocals:
+ *   1. Gentle low warmth (+1.3 dB @ 135 Hz)
+ *   2. De-mud scoop (-2.8 dB @ 260 Hz) to remove boxy room resonance
+ *   3. Vocal presence boost (+3.2 dB @ 3.2 kHz) for crisp speech intelligibility
+ *   4. Condenser air shelf (+1.8 dB @ 9.5 kHz) for open studio sheen
+ *   5. Split-band dynamic de-esser (tames harsh 6–9 kHz "s/sh" spikes only)
+ */
+function runVoiceClarityEqAndDeEsser(channels, sampleRate, amount = 0.7) {
+  const amt = Math.max(0, Math.min(1, amount));
+  if (amt <= 0.01) {
+    return channels;
+  }
+
+  const warmth = makePeakingCoeffs(sampleRate, 135, 1.3 * amt, 1.0);
+  const deMud = makePeakingCoeffs(sampleRate, 260, -2.8 * amt, 1.2);
+  const presence = makePeakingCoeffs(sampleRate, 3200, 3.2 * amt, 0.95);
+  const air = makeHighShelfCoeffs(sampleRate, 9500, 1.8 * amt, 0.8);
+
+  // Split-band sibilance high-pass (5.8 kHz) for dynamic de-essing
+  const fSib = Math.min(5800, sampleRate * 0.42);
+  const w0 = (2 * Math.PI * fSib) / sampleRate;
+  const cosW0 = Math.cos(w0);
+  const alpha = Math.sin(w0) / (2 * Math.SQRT1_2);
+  const a0 = 1 + alpha;
+  const sibHp = {
+    b0: ((1 + cosW0) / 2) / a0,
+    b1: -(1 + cosW0) / a0,
+    b2: ((1 + cosW0) / 2) / a0,
+    a1: (-2 * cosW0) / a0,
+    a2: (1 - alpha) / a0,
+  };
+
+  const eqChannels = channels.map((ch) => {
+    let x = applyBiquad(ch, warmth);
+    x = applyBiquad(x, deMud);
+    x = applyBiquad(x, presence);
+    x = applyBiquad(x, air);
+    return x;
+  });
+
+  // Dynamic split-band de-esser: subtract excess sibilance above -24 dBFS
+  const attackCoeff = Math.exp(-1 / Math.max(1, 0.002 * sampleRate)); // 2 ms
+  const releaseCoeff = Math.exp(-1 / Math.max(1, 0.04 * sampleRate)); // 40 ms
+  const sibThresholdDb = -24;
+  const maxDeEssDb = 6 * amt;
+
+  return eqChannels.map((ch) => {
+    const highs = applyBiquad(ch, sibHp);
+    const out = new Float32Array(ch.length);
+    let env = 0;
+
+    for (let i = 0; i < ch.length; i++) {
+      const a = Math.abs(highs[i]);
+      env = a > env ? attackCoeff * env + (1 - attackCoeff) * a : releaseCoeff * env + (1 - releaseCoeff) * a;
+      const sibDb = linearToDb(env);
+      let attenGain = 1.0;
+      if (sibDb > sibThresholdDb) {
+        const grDb = Math.min(maxDeEssDb, (sibDb - sibThresholdDb) * 0.65);
+        attenGain = dbToLinear(-grDb);
+      }
+      // Attenuate ONLY the high-frequency sibilant band; keep low/mid speech untouched
+      const lowMid = ch[i] - highs[i];
+      out[i] = lowMid + highs[i] * attenGain;
+    }
+    return out;
+  });
 }
 
 /**
@@ -546,92 +849,114 @@ function runNormalizeAndLimit(
     return copy;
   });
 
-  // Step 2: 4x Oversampled Lookahead True-Peak Limiter
+  // Apply 4x Oversampled Lookahead True-Peak Limiter (reusable helper for 2-pass loudness lock)
   const ceilingLinear = dbToLinear(ceilingDbtp);
   const lookaheadSamples = Math.max(1, Math.round(0.005 * sampleRate)); // 5 ms
   const releaseCoeff = Math.exp(-1 / (0.06 * sampleRate)); // 60 ms release
-
-  // Compute instantaneous 4x true-peak envelope across all channels
-  const peakEnv = new Float32Array(length);
+  const attackCoeff = Math.exp(-1 / Math.max(1, 0.0015 * sampleRate));
   const fracs = [0.25, 0.5, 0.75];
 
-  for (let i = 0; i < length; i++) {
-    let maxP = 0;
-    for (let ch = 0; ch < numChannels; ch++) {
-      const d = normalized[ch];
-      const absV = Math.abs(d[i]);
-      if (absV > maxP) maxP = absV;
+  const applyTruePeakLimiter = (inputChs) => {
+    const peakEnv = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+      let maxP = 0;
+      for (let ch = 0; ch < numChannels; ch++) {
+        const d = inputChs[ch];
+        const absV = Math.abs(d[i]);
+        if (absV > maxP) maxP = absV;
 
-      if (absV > ceilingLinear * 0.75 && i >= 1 && i + 2 < length) {
-        const y0 = d[i - 1];
-        const y1 = d[i];
-        const y2 = d[i + 1];
-        const y3 = d[i + 2];
-        for (let f = 0; f < 3; f++) {
-          const t = fracs[f];
-          const t2 = t * t;
-          const t3 = t2 * t;
-          const interp =
-            0.5 *
-            (2 * y1 +
-              (-y0 + y2) * t +
-              (2 * y0 - 5 * y1 + 4 * y2 - y3) * t2 +
-              (-y0 + 3 * y1 - 3 * y2 + y3) * t3);
-          const absI = Math.abs(interp);
-          if (absI > maxP) maxP = absI;
+        if (absV > ceilingLinear * 0.75 && i >= 1 && i + 2 < length) {
+          const y0 = d[i - 1];
+          const y1 = d[i];
+          const y2 = d[i + 1];
+          const y3 = d[i + 2];
+          for (let f = 0; f < 3; f++) {
+            const t = fracs[f];
+            const t2 = t * t;
+            const t3 = t2 * t;
+            const interp =
+              0.5 *
+              (2 * y1 +
+                (-y0 + y2) * t +
+                (2 * y0 - 5 * y1 + 4 * y2 - y3) * t2 +
+                (-y0 + 3 * y1 - 3 * y2 + y3) * t3);
+            const absI = Math.abs(interp);
+            if (absI > maxP) maxP = absI;
+          }
         }
       }
+      peakEnv[i] = maxP;
     }
-    peakEnv[i] = maxP;
+
+    // Sliding maximum over [i, i + lookaheadSamples] using monotonic deque in O(N)
+    const desiredGain = new Float32Array(length);
+    const deque = new Int32Array(length);
+    let head = 0;
+    let tail = 0;
+
+    for (let i = length - 1; i >= 0; i--) {
+      const val = peakEnv[i];
+      while (tail > head && peakEnv[deque[tail - 1]] <= val) {
+        tail--;
+      }
+      deque[tail++] = i;
+      if (deque[head] > i + lookaheadSamples) {
+        head++;
+      }
+      const windowPeak = peakEnv[deque[head]];
+      desiredGain[i] = windowPeak > ceilingLinear ? ceilingLinear / windowPeak : 1.0;
+    }
+
+    const limited = inputChs.map(() => new Float32Array(length));
+    let gain = 1.0;
+    let maxGrDb = 0;
+
+    for (let i = 0; i < length; i++) {
+      const target = desiredGain[i];
+      if (target < gain) {
+        gain = Math.min(target, attackCoeff * gain + (1 - attackCoeff) * target);
+      } else {
+        gain = releaseCoeff * gain + (1 - releaseCoeff) * target;
+      }
+
+      const grDb = -linearToDb(gain);
+      if (grDb > maxGrDb) maxGrDb = grDb;
+
+      for (let ch = 0; ch < numChannels; ch++) {
+        let s = inputChs[ch][i] * gain;
+        if (s > ceilingLinear) s = ceilingLinear;
+        else if (s < -ceilingLinear) s = -ceilingLinear;
+        limited[ch][i] = s;
+      }
+    }
+    return { channels: limited, maxGrDb };
+  };
+
+  let pass1 = applyTruePeakLimiter(normalized);
+  let out = pass1.channels;
+  let limiterMaxGrDb = pass1.maxGrDb;
+  let totalMakeupDb = makeupDb;
+
+  // Step 3: 2nd-pass loudness target lock (if heavy limiting pulled integrated level below target)
+  if (currentLevel > -68 && mode === 'lufs') {
+    const postLufs = measureBS1770Loudness(out, sampleRate).integratedLufs;
+    const shortfall = targetLoudness - postLufs;
+    if (shortfall > 0.35 && shortfall < 8) {
+      const topUpDb = Math.min(3.5, shortfall);
+      const topUpLin = dbToLinear(topUpDb);
+      const topped = out.map((ch) => {
+        const arr = new Float32Array(length);
+        for (let i = 0; i < length; i++) arr[i] = ch[i] * topUpLin;
+        return arr;
+      });
+      const pass2 = applyTruePeakLimiter(topped);
+      out = pass2.channels;
+      limiterMaxGrDb = Math.max(limiterMaxGrDb, pass2.maxGrDb);
+      totalMakeupDb += topUpDb;
+    }
   }
 
-  // Sliding maximum over [i, i + lookaheadSamples] using monotonic deque in O(N)
-  const desiredGain = new Float32Array(length);
-  const deque = new Int32Array(length);
-  let head = 0;
-  let tail = 0;
-
-  for (let i = length - 1; i >= 0; i--) {
-    const val = peakEnv[i];
-    while (tail > head && peakEnv[deque[tail - 1]] <= val) {
-      tail--;
-    }
-    deque[tail++] = i;
-    if (deque[head] > i + lookaheadSamples) {
-      head++;
-    }
-    const windowPeak = peakEnv[deque[head]];
-    desiredGain[i] = windowPeak > ceilingLinear ? ceilingLinear / windowPeak : 1.0;
-  }
-
-  // Smooth gain envelope: fast attack to catch every transient, smooth release
-  const attackCoeff = Math.exp(-1 / Math.max(1, 0.0015 * sampleRate));
-  const out = normalized.map((ch) => new Float32Array(length));
-  let gain = 1.0;
-  let limiterMaxGrDb = 0;
-
-  for (let i = 0; i < length; i++) {
-    const target = desiredGain[i];
-    if (target < gain) {
-      // Never allow gain above the instantaneous hard safety ceiling
-      gain = Math.min(target, attackCoeff * gain + (1 - attackCoeff) * target);
-    } else {
-      gain = releaseCoeff * gain + (1 - releaseCoeff) * target;
-    }
-
-    const grDb = -linearToDb(gain);
-    if (grDb > limiterMaxGrDb) limiterMaxGrDb = grDb;
-
-    for (let ch = 0; ch < numChannels; ch++) {
-      let s = normalized[ch][i] * gain;
-      // Final mathematical safety clamp at ceiling
-      if (s > ceilingLinear) s = ceilingLinear;
-      else if (s < -ceilingLinear) s = -ceilingLinear;
-      out[ch][i] = s;
-    }
-  }
-
-  return { channels: out, makeupDb, limiterMaxGrDb };
+  return { channels: out, makeupDb: totalMakeupDb, limiterMaxGrDb };
 }
 
 /**
@@ -786,21 +1111,39 @@ export async function processAudioBuffer(inputBuffer, options, onProgress) {
     channels = runHighPassFilter(channels, sampleRate, options.highPassFreq);
   }
 
-  // Stage b: Noise gate / noise reduction
+  // Stage b: Noise reduction (Spectral Wiener STFT or Simple Noise Gate)
   if (options.noiseGateEnabled) {
+    const useSpectral = (options.noiseMode || 'spectral') === 'spectral';
     await notify(
-      28,
-      `Stage B: Estimating noise floor & gating (-${options.noiseGateReductionDb} dB)...`
+      26,
+      useSpectral
+        ? `Stage B: STFT Spectral Wiener denoising (-${options.noiseGateReductionDb} dB)...`
+        : `Stage B: Estimating noise floor & gating (-${options.noiseGateReductionDb} dB)...`
     );
-    const res = runNoiseGate(
-      channels,
-      sampleRate,
-      options.noiseGateReductionDb,
-      options.noiseGateMarginDb ?? 6
-    );
+    const res = useSpectral
+      ? runSpectralDenoiser(channels, sampleRate, options.noiseGateReductionDb)
+      : runNoiseGate(
+          channels,
+          sampleRate,
+          options.noiseGateReductionDb,
+          options.noiseGateMarginDb ?? 6
+        );
     channels = res.channels;
     report.estimatedNoiseFloorDb = res.noiseFloorDb;
     report.gateThresholdDb = res.thresholdDb;
+  }
+
+  // Stage b2: Studio Voice Clarity EQ & Split-Band De-Esser
+  if (options.voiceClarityEnabled) {
+    await notify(
+      38,
+      `Voice Clarity EQ & De-Esser (${Math.round((options.voiceClarityAmount ?? 0.7) * 100)}%)...`
+    );
+    channels = runVoiceClarityEqAndDeEsser(
+      channels,
+      sampleRate,
+      options.voiceClarityAmount ?? 0.7
+    );
   }
 
   // Stage c: Compressor
