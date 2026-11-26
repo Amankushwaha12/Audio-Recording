@@ -45,8 +45,8 @@ export default function App() {
 
   const [processingEngine, setProcessingEngine] = useState('dsp'); // 'dsp' | 'deepfilternet'
   const [dfOptions, setDfOptions] = useState({
-    attenuationLimit: 80,
-    postFilterBeta: 0.02,
+    attenuationLimit: 48,
+    postFilterBeta: 0.0,
     chainMastering: true,
   });
 
@@ -404,7 +404,7 @@ export default function App() {
           if (dfOptions.chainMastering) {
             const postRes = await processAudioBuffer(
               dfRes.audioBuffer,
-              { ...options, noiseGateEnabled: false },
+              { ...options, noiseGateEnabled: false, postNeuralCleanup: true },
               (prog) => {
                 const scaledPct = Math.round(65 + prog.percent * 0.33);
                 setProgress({ percent: scaledPct, stage: prog.stage });
