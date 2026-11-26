@@ -363,11 +363,13 @@ function runNoiseGate(channels, sampleRate, reductionDb, marginDb = 6) {
   );
   const minGain = dbToLinear(-Math.abs(reductionDb));
 
-  // Fast 6 ms attack + generous 140 ms hold + smooth 180 ms release preserves word edges
-  const attackCoeff = Math.exp(-1 / (0.006 * sampleRate));
-  const releaseCoeff = Math.exp(-1 / (0.18 * sampleRate));
-  const rmsDetectCoeff = Math.exp(-1 / (0.012 * sampleRate));
-  const holdSamples = Math.round(0.14 * sampleRate);
+  // 20 ms lookahead + 5 ms attack + 260 ms hold + 240 ms smooth release
+  // ensures word onsets open BEFORE speech begins and mid-word dips never break.
+  const lookaheadSamples = Math.round(0.02 * sampleRate);
+  const attackCoeff = Math.exp(-1 / (0.005 * sampleRate));
+  const releaseCoeff = Math.exp(-1 / (0.24 * sampleRate));
+  const rmsDetectCoeff = Math.exp(-1 / (0.010 * sampleRate));
+  const holdSamples = Math.round(0.26 * sampleRate);
 
   let envSq = 0;
   let gain = 1.0;
@@ -376,9 +378,11 @@ function runNoiseGate(channels, sampleRate, reductionDb, marginDb = 6) {
   const out = channels.map((ch) => new Float32Array(ch.length));
 
   for (let i = 0; i < length; i++) {
+    const detIdx = Math.min(length - 1, i + lookaheadSamples);
     let linkedSq = 0;
     for (let ch = 0; ch < numChannels; ch++) {
-      linkedSq += channels[ch][i] * channels[ch][i];
+      const s = channels[ch][detIdx];
+      linkedSq += s * s;
     }
     linkedSq /= numChannels;
     envSq = rmsDetectCoeff * envSq + (1 - rmsDetectCoeff) * linkedSq;
@@ -392,9 +396,9 @@ function runNoiseGate(channels, sampleRate, reductionDb, marginDb = 6) {
       targetGain = 1.0;
       holdCounter--;
     } else {
-      // Wide 10 dB soft knee prevents abrupt choppy word tails
+      // Wide 12 dB soft knee prevents abrupt choppy word tails
       const belowDb = thresholdDb - levelDb;
-      const ratio = Math.min(1, belowDb / 10);
+      const ratio = Math.min(1, belowDb / 12);
       targetGain = 1.0 - ratio * (1.0 - minGain);
     }
 

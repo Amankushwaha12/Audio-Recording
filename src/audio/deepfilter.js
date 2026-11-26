@@ -383,36 +383,76 @@ export async function denoiseWithDeepFilterNet(
 
         // Only guard when there is genuine foreground speech above the room floor
         if (speechRefDb - floorDb >= 14) {
-          const fgThreshDb = Math.max(floorDb + 16, speechRefDb - 11.5);
-          const targetDryMix = new Float32Array(numBlocks);
+          const coreSpeechThreshDb = Math.max(floorDb + 15, speechRefDb - 13.5);
+          const phraseFloorGuardDb = Math.max(floorDb + 5, speechRefDb - 26);
 
+          // Step 1: Identify core foreground speech blocks
+          const isCoreSpeech = new Uint8Array(numBlocks);
           for (let b = 0; b < numBlocks; b++) {
-            const inDb = inBlockDb[b];
-            const dropDb = inDb - dfBlockDb[b];
-            // Foreground syllable falsely ducked by > 2.5 dB
-            if (inDb >= fgThreshDb && dropDb > 2.5) {
-              const fgConfidence = Math.min(1, (inDb - fgThreshDb) / 4.0);
-              const desiredTargetRatio = dbToLinear(-2.0); // Allow max ~2 dB natural cleanup on loud speech
-              const currentRatio = dbToLinear(-dropDb);
-              const neededMix = Math.max(
-                0,
-                Math.min(0.85, (desiredTargetRatio - currentRatio) / Math.max(0.05, 1 - currentRatio))
-              );
-              targetDryMix[b] = neededMix * fgConfidence;
+            if (inBlockDb[b] >= coreSpeechThreshDb) {
+              isCoreSpeech[b] = 1;
             }
           }
 
-          // Smooth dryMix sample-by-sample (15 ms attack, 45 ms release) for zero clicks
-          const mixAtk = Math.exp(-1 / (0.015 * DF_SAMPLE_RATE));
-          const mixRel = Math.exp(-1 / (0.045 * DF_SAMPLE_RATE));
+          // Step 2: Bidirectional phrase dilation (-80 ms pre-onset, +220 ms hangover)
+          // Bridges every mid-word consonant dip/transition up to 300 ms wide AND protects
+          // soft word onsets ("H", "s", "m") without ever touching pauses/background chatter.
+          const preBlocks = 8; // 80 ms before speech onset
+          const postBlocks = 22; // 220 ms hold across mid-word dips & natural tails
+          const phraseWeight = new Float32Array(numBlocks);
+
+          for (let b = 0; b < numBlocks; b++) {
+            if (isCoreSpeech[b]) {
+              const start = Math.max(0, b - preBlocks);
+              const end = Math.min(numBlocks - 1, b + postBlocks);
+              for (let k = start; k <= end; k++) {
+                // Full weight inside core & short bridges; smooth taper at outer edges
+                let w = 1.0;
+                if (k < b - 4) {
+                  w = Math.max(0, 1 - (b - 4 - k) / Math.max(1, preBlocks - 4));
+                } else if (k > b + 14) {
+                  w = Math.max(0, 1 - (k - (b + 14)) / Math.max(1, postBlocks - 14));
+                }
+                if (w > phraseWeight[k]) phraseWeight[k] = w;
+              }
+            }
+          }
+
+          // Step 3: Inside active speech phrases, cap sudden false neural dropouts smoothly
+          const targetDryMix = new Float32Array(numBlocks);
+          for (let b = 0; b < numBlocks; b++) {
+            const pw = phraseWeight[b];
+            if (pw <= 0.01) continue;
+
+            const inDb = inBlockDb[b];
+            const dropDb = inDb - dfBlockDb[b];
+            if (inDb >= phraseFloorGuardDb && dropDb > 2.2) {
+              const levelConf = Math.min(1, (inDb - phraseFloorGuardDb) / 6.0);
+              const desiredRatio = dbToLinear(-1.8); // Never falsely drop mid-word speech > ~1.8 dB
+              const currentRatio = dbToLinear(-dropDb);
+              const neededMix = Math.max(
+                0,
+                Math.min(
+                  0.92,
+                  (desiredRatio - currentRatio) / Math.max(0.04, 1 - currentRatio)
+                )
+              );
+              targetDryMix[b] = neededMix * pw * levelConf;
+            }
+          }
+
+          // Smooth dryMix sample-by-sample (10 ms attack, 55 ms release) for zero clicks
+          const mixAtk = Math.exp(-1 / (0.010 * DF_SAMPLE_RATE));
+          const mixRel = Math.exp(-1 / (0.055 * DF_SAMPLE_RATE));
           let curMix = 0;
 
           for (let i = 0; i < length48k; i++) {
             const b = Math.min(numBlocks - 1, Math.floor(i / guardBlock));
             const tgt = targetDryMix[b];
-            curMix = tgt > curMix
-              ? mixAtk * curMix + (1 - mixAtk) * tgt
-              : mixRel * curMix + (1 - mixRel) * tgt;
+            curMix =
+              tgt > curMix
+                ? mixAtk * curMix + (1 - mixAtk) * tgt
+                : mixRel * curMix + (1 - mixRel) * tgt;
             const blended = aligned[i] * (1 - curMix) + srcData[i] * dryScale * curMix;
             aligned[i] = Math.max(-1, Math.min(1, blended));
           }
