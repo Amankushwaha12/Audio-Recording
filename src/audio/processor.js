@@ -55,14 +55,16 @@ export const PRESETS = {
       noiseGateReductionDb: 16,
       noiseGateMarginDb: 6,
       voiceClarityEnabled: true,
-      voiceClarityAmount: 0.8,
+      voiceClarityAmount: 0.6,
+      smoothToneEnabled: true,
+      smoothToneAmount: 0.65,
       compressorEnabled: true,
       compThresholdDb: -19,
-      compRatio: 2.6,
-      compAttackMs: 10,
-      compReleaseMs: 120,
+      compRatio: 2.5,
+      compAttackMs: 12,
+      compReleaseMs: 130,
       levelerEnabled: true,
-      levelerStrength: 0.75,
+      levelerStrength: 0.7,
       normalizeEnabled: true,
       normalizeMode: 'lufs',
       targetLoudness: -15,
@@ -74,7 +76,7 @@ export const PRESETS = {
   podcast: {
     id: 'podcast',
     label: 'Podcast',
-    summary: '-16 LUFS, spectral noise cleanup, adaptive voice clarity, smooth dynamics',
+    summary: '-16 LUFS, clean noise reduction, smooth natural voice tone, even dynamics',
     dfOptions: {
       attenuationLimit: 45,
       postFilterBeta: 0.0,
@@ -88,14 +90,16 @@ export const PRESETS = {
       noiseGateReductionDb: 16,
       noiseGateMarginDb: 6,
       voiceClarityEnabled: true,
-      voiceClarityAmount: 0.75,
+      voiceClarityAmount: 0.55,
+      smoothToneEnabled: true,
+      smoothToneAmount: 0.6,
       compressorEnabled: true,
       compThresholdDb: -20,
-      compRatio: 2.5,
-      compAttackMs: 10,
-      compReleaseMs: 130,
+      compRatio: 2.4,
+      compAttackMs: 12,
+      compReleaseMs: 140,
       levelerEnabled: true,
-      levelerStrength: 0.7,
+      levelerStrength: 0.65,
       normalizeEnabled: true,
       normalizeMode: 'lufs',
       targetLoudness: -16,
@@ -107,7 +111,7 @@ export const PRESETS = {
   audiobook: {
     id: 'audiobook',
     label: 'Audiobook',
-    summary: 'ACX style: -20 dBFS RMS, natural voice warmth, strict -3.0 dBTP ceiling',
+    summary: 'ACX style: -20 dBFS RMS, warm smooth tone, gentle leveling, -3.0 dBTP ceiling',
     dfOptions: {
       attenuationLimit: 32,
       postFilterBeta: 0.0,
@@ -121,7 +125,9 @@ export const PRESETS = {
       noiseGateReductionDb: 10,
       noiseGateMarginDb: 5,
       voiceClarityEnabled: true,
-      voiceClarityAmount: 0.45,
+      voiceClarityAmount: 0.4,
+      smoothToneEnabled: true,
+      smoothToneAmount: 0.75,
       compressorEnabled: true,
       compThresholdDb: -22,
       compRatio: 2.0,
@@ -140,10 +146,10 @@ export const PRESETS = {
   youtube: {
     id: 'youtube',
     label: 'YouTube / Reels',
-    summary: 'Loud & crisp -14 LUFS voiceover, strong clarity EQ, trims pauses >0.8 s',
+    summary: 'Punchy -14 LUFS voiceover, balanced clarity & smooth tone, trims pauses >0.8 s',
     dfOptions: {
-      attenuationLimit: 55,
-      postFilterBeta: 0.005,
+      attenuationLimit: 52,
+      postFilterBeta: 0.0,
       chainMastering: true,
     },
     options: {
@@ -151,17 +157,19 @@ export const PRESETS = {
       highPassFreq: 90,
       noiseGateEnabled: true,
       noiseMode: 'spectral',
-      noiseGateReductionDb: 20,
+      noiseGateReductionDb: 18,
       noiseGateMarginDb: 6,
       voiceClarityEnabled: true,
-      voiceClarityAmount: 0.9,
+      voiceClarityAmount: 0.7,
+      smoothToneEnabled: true,
+      smoothToneAmount: 0.45,
       compressorEnabled: true,
       compThresholdDb: -18,
-      compRatio: 3.0,
-      compAttackMs: 7,
-      compReleaseMs: 110,
+      compRatio: 2.8,
+      compAttackMs: 8,
+      compReleaseMs: 120,
       levelerEnabled: true,
-      levelerStrength: 0.8,
+      levelerStrength: 0.75,
       normalizeEnabled: true,
       normalizeMode: 'lufs',
       targetLoudness: -14,
@@ -173,7 +181,7 @@ export const PRESETS = {
   broadcast: {
     id: 'broadcast',
     label: 'Broadcast EBU',
-    summary: 'EBU R128 / TV standard: -23 LUFS, natural clarity, -1.0 dBTP ceiling',
+    summary: 'EBU R128 / TV standard: -23 LUFS, natural smooth tone, -1.0 dBTP ceiling',
     dfOptions: {
       attenuationLimit: 38,
       postFilterBeta: 0.0,
@@ -187,7 +195,9 @@ export const PRESETS = {
       noiseGateReductionDb: 12,
       noiseGateMarginDb: 5,
       voiceClarityEnabled: true,
-      voiceClarityAmount: 0.55,
+      voiceClarityAmount: 0.5,
+      smoothToneEnabled: true,
+      smoothToneAmount: 0.55,
       compressorEnabled: true,
       compThresholdDb: -24,
       compRatio: 2.2,
@@ -206,10 +216,10 @@ export const PRESETS = {
   noisy: {
     id: 'noisy',
     label: 'Noisy Recording',
-    summary: 'Heavy rescue: 100 Hz HPF, strong denoising, clarity EQ, trims >1.0 s',
+    summary: 'Heavy rescue: 100 Hz HPF, strong denoising, smooth tone, trims >1.0 s',
     dfOptions: {
-      attenuationLimit: 72,
-      postFilterBeta: 0.01,
+      attenuationLimit: 64,
+      postFilterBeta: 0.0,
       chainMastering: true,
     },
     options: {
@@ -217,17 +227,19 @@ export const PRESETS = {
       highPassFreq: 100,
       noiseGateEnabled: true,
       noiseMode: 'spectral',
-      noiseGateReductionDb: 26,
+      noiseGateReductionDb: 24,
       noiseGateMarginDb: 7,
       voiceClarityEnabled: true,
-      voiceClarityAmount: 0.8,
+      voiceClarityAmount: 0.6,
+      smoothToneEnabled: true,
+      smoothToneAmount: 0.65,
       compressorEnabled: true,
       compThresholdDb: -20,
-      compRatio: 3.0,
-      compAttackMs: 8,
-      compReleaseMs: 120,
+      compRatio: 2.8,
+      compAttackMs: 10,
+      compReleaseMs: 130,
       levelerEnabled: true,
-      levelerStrength: 0.8,
+      levelerStrength: 0.75,
       normalizeEnabled: true,
       normalizeMode: 'lufs',
       targetLoudness: -15,
@@ -354,22 +366,22 @@ function runNoiseGate(channels, sampleRate, reductionDb, marginDb = 6) {
       ? roomFrames[Math.floor(roomFrames.length * 0.12)]
       : -65;
 
-  // Place threshold cleanly below active speech (silences -45..-60 dB background chatter/breaths
-  // while keeping soft foreground speech down to speechRef - 18 dB completely intact)
-  const speechRelativeThresh = speechRefDb - 20;
+  // Place threshold conservatively below soft speech so quiet syllables NEVER break:
+  // at least 26 dB below active speech (or floor + margin), never above -40 dBFS
+  const speechRelativeThresh = Math.min(-40, speechRefDb - 26);
   const thresholdDb = Math.max(
-    -56,
-    Math.min(speechRelativeThresh, Math.max(floorFromRoom + marginDb, speechRefDb - 23))
+    -58,
+    Math.min(speechRelativeThresh, Math.max(floorFromRoom + marginDb, speechRefDb - 29))
   );
   const minGain = dbToLinear(-Math.abs(reductionDb));
 
-  // 20 ms lookahead + 5 ms attack + 260 ms hold + 240 ms smooth release
-  // ensures word onsets open BEFORE speech begins and mid-word dips never break.
-  const lookaheadSamples = Math.round(0.02 * sampleRate);
+  // 25 ms lookahead + 5 ms attack + 340 ms hold + 280 ms smooth release
+  // guarantees word starts open BEFORE speech begins and mid-word dips never break.
+  const lookaheadSamples = Math.round(0.025 * sampleRate);
   const attackCoeff = Math.exp(-1 / (0.005 * sampleRate));
-  const releaseCoeff = Math.exp(-1 / (0.24 * sampleRate));
-  const rmsDetectCoeff = Math.exp(-1 / (0.010 * sampleRate));
-  const holdSamples = Math.round(0.26 * sampleRate);
+  const releaseCoeff = Math.exp(-1 / (0.28 * sampleRate));
+  const rmsDetectCoeff = Math.exp(-1 / (0.012 * sampleRate));
+  const holdSamples = Math.round(0.34 * sampleRate);
 
   let envSq = 0;
   let gain = 1.0;
@@ -687,21 +699,22 @@ function runVoiceClarityEqAndDeEsser(channels, sampleRate, amount = 0.75) {
     darknessFactor = Math.max(0, Math.min(1, (tiltDb - 9) / 13));
   }
 
-  const deMudDb = -(2.2 + 3.2 * darknessFactor) * amt; // -2.2 dB to -5.4 dB @ 260 Hz
-  const deBoomDb = darknessFactor > 0.25 ? -(2.8 * (darknessFactor - 0.25) / 0.75) * amt : 0; // Gentle low-shelf cut below 190 Hz on boomy mics
-  const presenceDb = (2.6 + 4.4 * darknessFactor) * amt; // +2.6 dB to +7.0 dB @ 2.9 kHz
-  const brillianceDb = (1.6 + 2.8 * darknessFactor) * amt; // +1.6 dB to +4.4 dB @ 6.2 kHz shelf
-  // Only add subtle warmth if mic isn't already boomy/dark
-  const warmthDb = (1.2 * (1 - darknessFactor)) * amt;
+  // Refined, natural vocal clarity curves (never sharp or piercing!)
+  const deMudDb = -(1.8 + 2.2 * darknessFactor) * amt; // -1.8 dB to -4.0 dB @ 260 Hz
+  const deBoomDb = darknessFactor > 0.35 ? -(1.8 * (darknessFactor - 0.35) / 0.65) * amt : 0; // Gentle low-shelf tidy below 180 Hz
+  const presenceDb = (1.6 + 2.4 * darknessFactor) * amt; // +1.6 dB to +4.0 dB @ 2.8 kHz (crisp without harshness)
+  const brillianceDb = (1.0 + 1.6 * darknessFactor) * amt; // +1.0 dB to +2.6 dB @ 6.4 kHz shelf
+  // Preserve natural warmth unless microphone is extremely dark
+  const warmthDb = (1.1 * (1 - darknessFactor * 0.7)) * amt;
 
-  const deBoom = deBoomDb < -0.2 ? makeLowShelfCoeffs(sampleRate, 190, deBoomDb, 0.75) : null;
+  const deBoom = deBoomDb < -0.2 ? makeLowShelfCoeffs(sampleRate, 180, deBoomDb, 0.75) : null;
   const deMud = makePeakingCoeffs(sampleRate, 260, deMudDb, 0.95);
-  const presence = makePeakingCoeffs(sampleRate, 2900, presenceDb, 0.85);
-  const brilliance = makeHighShelfCoeffs(sampleRate, 6200, brillianceDb, 0.75);
-  const warmth = warmthDb > 0.15 ? makePeakingCoeffs(sampleRate, 130, warmthDb, 1.0) : null;
+  const presence = makePeakingCoeffs(sampleRate, 2800, presenceDb, 0.8);
+  const brilliance = makeHighShelfCoeffs(sampleRate, 6400, brillianceDb, 0.75);
+  const warmth = warmthDb > 0.15 ? makePeakingCoeffs(sampleRate, 140, warmthDb, 0.95) : null;
 
-  // Split-band sibilance high-pass (5.8 kHz) for dynamic de-essing
-  const fSib = Math.min(5800, sampleRate * 0.42);
+  // Split-band sibilance high-pass (5.6 kHz) for dynamic de-essing
+  const fSib = Math.min(5600, sampleRate * 0.42);
   const w0 = (2 * Math.PI * fSib) / sampleRate;
   const cosW0 = Math.cos(w0);
   const alpha = Math.sin(w0) / (2 * Math.SQRT1_2);
@@ -723,10 +736,10 @@ function runVoiceClarityEqAndDeEsser(channels, sampleRate, amount = 0.75) {
     return x;
   });
 
-  // Dynamic split-band de-esser: softly attenuates sharp 5.8 kHz+ sibilants only
+  // Dynamic split-band de-esser: softly attenuates sharp 5.6 kHz+ sibilants only
   const attackCoeff = Math.exp(-1 / Math.max(1, 0.002 * sampleRate));
-  const releaseCoeff = Math.exp(-1 / Math.max(1, 0.045 * sampleRate));
-  const sibThresholdDb = -22;
+  const releaseCoeff = Math.exp(-1 / Math.max(1, 0.05 * sampleRate));
+  const sibThresholdDb = -23;
   const maxDeEssDb = 6.5 * amt;
 
   return eqChannels.map((ch) => {
@@ -748,6 +761,87 @@ function runVoiceClarityEqAndDeEsser(channels, sampleRate, amount = 0.75) {
       }
       const lowMid = ch[i] - highs[i];
       out[i] = lowMid + highs[i] * attenGain;
+    }
+    return out;
+  });
+}
+
+function makeBandPassCoeffs(sampleRate, freqHz, q) {
+  const f0 = Math.max(80, Math.min(freqHz, sampleRate * 0.42));
+  const w0 = (2 * Math.PI * f0) / sampleRate;
+  const cosW0 = Math.cos(w0);
+  const alpha = Math.sin(w0) / (2 * q);
+  const a0 = 1 + alpha;
+  return {
+    b0: alpha / a0,
+    b1: 0,
+    b2: -alpha / a0,
+    a1: (-2 * cosW0) / a0,
+    a2: (1 - alpha) / a0,
+  };
+}
+
+/**
+ * Smooth Tone — Analog-Style Vocal De-Harsher & Velvety Warmth
+ * Rounds off sharp, piercing 2.4–5.0 kHz vocal resonances dynamically (only when
+ * harsh spikes occur), softens brittle high-frequency edge above 6.5 kHz, adds
+ * subtle natural chest warmth around 185 Hz, and applies gentle analog-style
+ * soft-saturation rounding so the voice sounds rich, smooth, and easy to listen to.
+ */
+function runSmoothTone(channels, sampleRate, amount = 0.6) {
+  const amt = Math.max(0, Math.min(1, amount));
+  if (amt <= 0.01) {
+    return channels;
+  }
+
+  // 1. Static silky tonal rounding: warm low-mid body + gentle top-end silk
+  const bodyWarmth = makePeakingCoeffs(sampleRate, 185, 1.8 * amt, 0.85);
+  const harshDip = makePeakingCoeffs(sampleRate, 3400, -1.6 * amt, 1.1);
+  const silkShelf = makeHighShelfCoeffs(sampleRate, 6800, -2.6 * amt, 0.7);
+
+  // 2. Dynamic harshness detector centered at 3.2 kHz (Q = 1.2 -> ~2.0–4.8 kHz band)
+  const harshBand = makeBandPassCoeffs(sampleRate, 3200, 1.2);
+  const attackCoeff = Math.exp(-1 / Math.max(1, 0.003 * sampleRate));
+  const releaseCoeff = Math.exp(-1 / Math.max(1, 0.075 * sampleRate));
+  const harshThresholdDb = -25;
+  const maxDynamicCutDb = 5.0 * amt;
+
+  // 3. Subtle analog soft-saturation drive for smooth transient rounding
+  const drive = 1 + 0.45 * amt;
+  const invTanhDrive = 1 / Math.tanh(drive);
+
+  return channels.map((ch) => {
+    // Apply dynamic harshness tamer first
+    const harshSig = applyBiquad(ch, harshBand);
+    const deHarshed = new Float32Array(ch.length);
+    let env = 0;
+
+    for (let i = 0; i < ch.length; i++) {
+      const a = Math.abs(harshSig[i]);
+      env =
+        a > env
+          ? attackCoeff * env + (1 - attackCoeff) * a
+          : releaseCoeff * env + (1 - releaseCoeff) * a;
+      const bandDb = linearToDb(env);
+      let atten = 1.0;
+      if (bandDb > harshThresholdDb) {
+        const grDb = Math.min(maxDynamicCutDb, (bandDb - harshThresholdDb) * 0.5);
+        atten = dbToLinear(-grDb);
+      }
+      // Subtract only the excess harsh band energy (transparent split-band smoothing)
+      deHarshed[i] = ch[i] - harshSig[i] * (1 - atten);
+    }
+
+    // Apply velvety warmth + silk top-end EQ
+    let x = applyBiquad(deHarshed, bodyWarmth);
+    x = applyBiquad(x, harshDip);
+    x = applyBiquad(x, silkShelf);
+
+    // Gentle analog harmonic rounding (keeps peaks silky, zero distortion)
+    const out = new Float32Array(x.length);
+    for (let i = 0; i < x.length; i++) {
+      const s = Math.max(-1.2, Math.min(1.2, x[i]));
+      out[i] = Math.tanh(s * drive) * invTanhDrive;
     }
     return out;
   });
@@ -816,14 +910,16 @@ function runAutoLeveler(channels, sampleRate, strength = 0.75) {
       lastSpeechGainDb = g;
       silentStreak = 0;
     } else {
-      // During brief gaps (<0.6s) hold last gain so syllables never dip;
-      // during longer pauses, gently relax toward 0 dB (never boost silence!)
+      // During brief gaps (<= 0.6 s) hold last gain cleanly so syllables never dip;
+      // during longer pauses (> 0.6 s), gently relax toward 0 dB so silence is not boosted.
       silentStreak++;
-      const decay = silentStreak <= 3 ? 0.92 : 0.72;
-      lastSpeechGainDb = Math.min(lastSpeechGainDb, 0) === lastSpeechGainDb
-        ? lastSpeechGainDb * decay
-        : Math.max(0, lastSpeechGainDb * decay);
-      rawGainDb[w] = Math.min(0, lastSpeechGainDb); // Never boost below speech gate
+      if (silentStreak <= 3) {
+        lastSpeechGainDb *= 0.94;
+        rawGainDb[w] = lastSpeechGainDb;
+      } else {
+        lastSpeechGainDb *= 0.65;
+        rawGainDb[w] = Math.min(0, lastSpeechGainDb);
+      }
     }
   }
 
@@ -1232,9 +1328,9 @@ export async function processAudioBuffer(inputBuffer, options, onProgress) {
     report.estimatedNoiseFloorDb = res.noiseFloorDb;
     report.gateThresholdDb = res.thresholdDb;
   } else if (options.postNeuralCleanup) {
-    // Gentle speech-relative expander after DeepFilterNet3 suppresses residual distant TV/breaths
-    await notify(26, 'Cleaning residual pause chatter & breaths...');
-    const res = runNoiseGate(channels, sampleRate, 14, 5);
+    // Ultra-gentle pause polish after DeepFilterNet3 (only touches deep silent gaps >340ms)
+    await notify(26, 'Polishing silent pauses...');
+    const res = runNoiseGate(channels, sampleRate, 10, 4);
     channels = res.channels;
     report.estimatedNoiseFloorDb = res.noiseFloorDb;
     report.gateThresholdDb = res.thresholdDb;
@@ -1243,13 +1339,26 @@ export async function processAudioBuffer(inputBuffer, options, onProgress) {
   // Stage +: Adaptive Studio Voice Clarity EQ & Split-Band De-Esser
   if (options.voiceClarityEnabled) {
     await notify(
-      40,
-      `Adaptive Voice Clarity EQ & De-Esser (${Math.round((options.voiceClarityAmount ?? 0.75) * 100)}%)...`
+      36,
+      `Adaptive Voice Clarity EQ & De-Esser (${Math.round((options.voiceClarityAmount ?? 0.6) * 100)}%)...`
     );
     channels = runVoiceClarityEqAndDeEsser(
       channels,
       sampleRate,
-      options.voiceClarityAmount ?? 0.75
+      options.voiceClarityAmount ?? 0.6
+    );
+  }
+
+  // Stage +: Smooth Tone (Dynamic Harshness Tamer + Warm Velvety Rounding)
+  if (options.smoothToneEnabled) {
+    await notify(
+      45,
+      `Smooth Tone vocal rounding (${Math.round((options.smoothToneAmount ?? 0.6) * 100)}%)...`
+    );
+    channels = runSmoothTone(
+      channels,
+      sampleRate,
+      options.smoothToneAmount ?? 0.6
     );
   }
 

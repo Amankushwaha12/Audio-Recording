@@ -381,10 +381,12 @@ export async function denoiseWithDeepFilterNet(
         const speechRefDb = activeDbs[Math.floor(activeDbs.length * 0.85)];
         const floorDb = roomDbs[Math.floor(roomDbs.length * 0.15)];
 
-        // Only guard when there is genuine foreground speech above the room floor
-        if (speechRefDb - floorDb >= 14) {
-          const coreSpeechThreshDb = Math.max(floorDb + 15, speechRefDb - 13.5);
-          const phraseFloorGuardDb = Math.max(floorDb + 5, speechRefDb - 26);
+        // Protect speech whenever foreground speech is at least 8 dB above room floor
+        if (speechRefDb - floorDb >= 8) {
+          // Wide-dynamic core threshold so quiet phrases/syllables are ALSO protected
+          // even when another word in the recording is much louder
+          const coreSpeechThreshDb = Math.max(floorDb + 11, speechRefDb - 22);
+          const phraseFloorGuardDb = Math.max(floorDb + 4, speechRefDb - 32);
 
           // Step 1: Identify core foreground speech blocks
           const isCoreSpeech = new Uint8Array(numBlocks);
@@ -394,31 +396,47 @@ export async function denoiseWithDeepFilterNet(
             }
           }
 
-          // Step 2: Bidirectional phrase dilation (-80 ms pre-onset, +220 ms hangover)
-          // Bridges every mid-word consonant dip/transition up to 300 ms wide AND protects
-          // soft word onsets ("H", "s", "m") without ever touching pauses/background chatter.
-          const preBlocks = 8; // 80 ms before speech onset
-          const postBlocks = 22; // 220 ms hold across mid-word dips & natural tails
+          // Step 2: Morphological gap-closing — any brief dip (< 360 ms) with speech on
+          // BOTH sides is guaranteed to be mid-word/mid-phrase, never silence!
+          const maxBridgeBlocks = 36; // 360 ms
+          const phraseCore = Uint8Array.from(isCoreSpeech);
+          let lastSpeechIdx = -1;
+          for (let b = 0; b < numBlocks; b++) {
+            if (isCoreSpeech[b]) {
+              if (lastSpeechIdx >= 0 && b - lastSpeechIdx <= maxBridgeBlocks) {
+                for (let k = lastSpeechIdx + 1; k < b; k++) {
+                  phraseCore[k] = 1;
+                }
+              }
+              lastSpeechIdx = b;
+            }
+          }
+
+          // Step 3: Bidirectional phrase dilation (-100 ms pre-onset, +300 ms hangover)
+          // Protects soft word starts, sudden downward inflections, and natural tails
+          // without ever touching long pauses or distant background chatter.
+          const preBlocks = 10; // 100 ms before word start
+          const postBlocks = 30; // 300 ms hold across tails & soft transitions
           const phraseWeight = new Float32Array(numBlocks);
 
           for (let b = 0; b < numBlocks; b++) {
-            if (isCoreSpeech[b]) {
+            if (phraseCore[b]) {
               const start = Math.max(0, b - preBlocks);
               const end = Math.min(numBlocks - 1, b + postBlocks);
               for (let k = start; k <= end; k++) {
-                // Full weight inside core & short bridges; smooth taper at outer edges
                 let w = 1.0;
-                if (k < b - 4) {
-                  w = Math.max(0, 1 - (b - 4 - k) / Math.max(1, preBlocks - 4));
-                } else if (k > b + 14) {
-                  w = Math.max(0, 1 - (k - (b + 14)) / Math.max(1, postBlocks - 14));
+                if (k < b - 5) {
+                  w = Math.max(0, 1 - (b - 5 - k) / Math.max(1, preBlocks - 5));
+                } else if (k > b + 18) {
+                  w = Math.max(0, 1 - (k - (b + 18)) / Math.max(1, postBlocks - 18));
                 }
                 if (w > phraseWeight[k]) phraseWeight[k] = w;
               }
             }
           }
 
-          // Step 3: Inside active speech phrases, cap sudden false neural dropouts smoothly
+          // Step 4: Inside active speech phrases, prevent DeepFilterNet3 from ever
+          // carving a sudden break/notch when voice energy dips momentarily
           const targetDryMix = new Float32Array(numBlocks);
           for (let b = 0; b < numBlocks; b++) {
             const pw = phraseWeight[b];
@@ -426,29 +444,39 @@ export async function denoiseWithDeepFilterNet(
 
             const inDb = inBlockDb[b];
             const dropDb = inDb - dfBlockDb[b];
-            if (inDb >= phraseFloorGuardDb && dropDb > 2.2) {
-              const levelConf = Math.min(1, (inDb - phraseFloorGuardDb) / 6.0);
-              const desiredRatio = dbToLinear(-1.8); // Never falsely drop mid-word speech > ~1.8 dB
+            if (inDb >= phraseFloorGuardDb && dropDb > 1.8) {
+              const levelConf = Math.min(1, (inDb - phraseFloorGuardDb) / 5.0);
+              // Cap false attenuation inside a phrase to at most ~1.5 dB
+              const desiredRatio = dbToLinear(-1.5);
               const currentRatio = dbToLinear(-dropDb);
               const neededMix = Math.max(
                 0,
                 Math.min(
-                  0.92,
-                  (desiredRatio - currentRatio) / Math.max(0.04, 1 - currentRatio)
+                  0.96,
+                  (desiredRatio - currentRatio) / Math.max(0.03, 1 - currentRatio)
                 )
               );
               targetDryMix[b] = neededMix * pw * levelConf;
             }
           }
 
-          // Smooth dryMix sample-by-sample (10 ms attack, 55 ms release) for zero clicks
-          const mixAtk = Math.exp(-1 / (0.010 * DF_SAMPLE_RATE));
-          const mixRel = Math.exp(-1 / (0.055 * DF_SAMPLE_RATE));
+          // Smooth targetDryMix across neighboring 10 ms blocks (zero-phase anti-notch)
+          const smoothDryMix = new Float32Array(numBlocks);
+          for (let b = 0; b < numBlocks; b++) {
+            const prev = targetDryMix[Math.max(0, b - 1)];
+            const curr = targetDryMix[b];
+            const next = targetDryMix[Math.min(numBlocks - 1, b + 1)];
+            smoothDryMix[b] = Math.max(curr, 0.25 * prev + 0.5 * curr + 0.25 * next);
+          }
+
+          // Smooth dryMix sample-by-sample (6 ms attack, 75 ms release) for zero clicks/breaks
+          const mixAtk = Math.exp(-1 / (0.006 * DF_SAMPLE_RATE));
+          const mixRel = Math.exp(-1 / (0.075 * DF_SAMPLE_RATE));
           let curMix = 0;
 
           for (let i = 0; i < length48k; i++) {
             const b = Math.min(numBlocks - 1, Math.floor(i / guardBlock));
-            const tgt = targetDryMix[b];
+            const tgt = smoothDryMix[b];
             curMix =
               tgt > curMix
                 ? mixAtk * curMix + (1 - mixAtk) * tgt

@@ -384,20 +384,41 @@ export default function ProcessingRack({
         <StageSection
           indexLabel="+"
           title="Voice Clarity EQ & De-Esser"
-          subtitle="Cuts 260 Hz mud, boosts 3.2 kHz clarity & softens harsh sibilance"
+          subtitle="Cuts 260 Hz mud, adds balanced clarity & softens sibilance"
           checked={Boolean(options.voiceClarityEnabled)}
           onToggle={(val) => onChangeOption('voiceClarityEnabled', val)}
         >
           <SliderField
             id="voice-clarity"
             label="Clarity & presence"
-            value={Math.round((options.voiceClarityAmount ?? 0.65) * 100)}
-            displayValue={`${Math.round((options.voiceClarityAmount ?? 0.65) * 100)}%`}
+            value={Math.round((options.voiceClarityAmount ?? 0.6) * 100)}
+            displayValue={`${Math.round((options.voiceClarityAmount ?? 0.6) * 100)}%`}
             min={0}
             max={100}
             step={5}
             disabled={!options.voiceClarityEnabled}
             onChange={(val) => onChangeOption('voiceClarityAmount', val / 100)}
+          />
+        </StageSection>
+
+        {/* Smooth Tone: Dynamic Harshness Tamer & Warm Velvety Tone */}
+        <StageSection
+          indexLabel="+"
+          title="Smooth Tone"
+          subtitle="Rounds off sharp 2.5–5 kHz harshness for a warm, smooth voice"
+          checked={Boolean(options.smoothToneEnabled)}
+          onToggle={(val) => onChangeOption('smoothToneEnabled', val)}
+        >
+          <SliderField
+            id="smooth-tone"
+            label="Smoothness"
+            value={Math.round((options.smoothToneAmount ?? 0.6) * 100)}
+            displayValue={`${Math.round((options.smoothToneAmount ?? 0.6) * 100)}%`}
+            min={0}
+            max={100}
+            step={5}
+            disabled={!options.smoothToneEnabled}
+            onChange={(val) => onChangeOption('smoothToneAmount', val / 100)}
           />
         </StageSection>
 
