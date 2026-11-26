@@ -7,6 +7,15 @@ import {
   generateDemoAudioBuffer,
   processAudioBuffer,
 } from './audio/processor.js';
+import {
+  STORE_ORIGINALS,
+  STORE_PROCESSED,
+  clearStore,
+  deleteClipFromStore,
+  listStoredClips,
+  saveClipToStore,
+  triggerBlobDownload,
+} from './audio/storage.js';
 import { useABPlayer } from './hooks/useABPlayer.js';
 import { useMicRecorder } from './hooks/useMicRecorder.js';
 import UploadBar from './components/UploadBar.jsx';
@@ -14,6 +23,7 @@ import ProcessingRack from './components/ProcessingRack.jsx';
 import TransportDeck from './components/TransportDeck.jsx';
 import MetricsComparison from './components/MetricsComparison.jsx';
 import Visualizations from './components/Visualizations.jsx';
+import StorageLibrary from './components/StorageLibrary.jsx';
 import HowItWorks from './components/HowItWorks.jsx';
 
 function getInitialTheme() {
@@ -40,6 +50,12 @@ export default function App() {
   const [progress, setProgress] = useState({ percent: 0, stage: '' });
   const [errorMessage, setErrorMessage] = useState(null);
 
+  // Separate IndexedDB storage lists for Original vs Processed comparison
+  const [originalClips, setOriginalClips] = useState([]);
+  const [processedClips, setProcessedClips] = useState([]);
+  const [activeOriginalId, setActiveOriginalId] = useState(null);
+  const [activeProcessedId, setActiveProcessedId] = useState(null);
+
   const fileInputRef = useRef(null);
 
   const {
@@ -53,35 +69,129 @@ export default function App() {
     getAudioContext,
   } = useABPlayer(originalBuffer, processedBuffer);
 
-  const handleRecordingComplete = useCallback((recordedBuffer) => {
-    setErrorMessage(null);
-    setIsDecoding(true);
-    setTimeout(() => {
-      try {
-        const analysis = analyzeAudioBuffer(recordedBuffer);
-        const now = new Date();
-        const stamp = [
-          String(now.getHours()).padStart(2, '0'),
-          String(now.getMinutes()).padStart(2, '0'),
-          String(now.getSeconds()).padStart(2, '0'),
-        ].join('');
-        setFileInfo({
-          name: `mic_recording_${stamp}.wav`,
-          size: recordedBuffer.length * recordedBuffer.numberOfChannels * 2 + 44,
-        });
-        setOriginalBuffer(recordedBuffer);
-        setOriginalAnalysis(analysis);
-        setProcessedBuffer(null);
-        setProcessedAnalysis(null);
-        setProcessingReport(null);
-      } catch (err) {
-        console.error('Recorded audio analysis error:', err);
-        setErrorMessage('Could not analyze the recorded audio clip. Please try recording again.');
-      } finally {
-        setIsDecoding(false);
-      }
-    }, 16);
+  // Load persisted Original & Processed clips from separate IndexedDB stores on mount
+  const refreshStorageLists = useCallback(async () => {
+    try {
+      const [origList, procList] = await Promise.all([
+        listStoredClips(STORE_ORIGINALS),
+        listStoredClips(STORE_PROCESSED),
+      ]);
+      setOriginalClips(origList);
+      setProcessedClips(procList);
+    } catch (err) {
+      console.warn('IndexedDB storage unavailable:', err);
+    }
   }, []);
+
+  useEffect(() => {
+    refreshStorageLists();
+  }, [refreshStorageLists]);
+
+  const persistOriginalBuffer = useCallback(
+    async (buffer, analysis, displayName) => {
+      try {
+        const wavBlob = encodeWav16Bit(buffer);
+        const record = {
+          id: `orig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          store: STORE_ORIGINALS,
+          name: displayName.endsWith('.wav') ? displayName : `${displayName}.wav`,
+          createdAt: Date.now(),
+          duration: analysis.duration,
+          sampleRate: analysis.sampleRate,
+          channels: analysis.channels,
+          integratedLufs: analysis.integratedLufs,
+          peakDb: analysis.peakDb,
+          rmsDb: analysis.rmsDb,
+          sizeBytes: wavBlob.size,
+          wavBlob,
+        };
+        await saveClipToStore(STORE_ORIGINALS, record);
+        setActiveOriginalId(record.id);
+        await refreshStorageLists();
+        return record;
+      } catch (err) {
+        console.warn('Could not save original clip to IndexedDB:', err);
+        return null;
+      }
+    },
+    [refreshStorageLists]
+  );
+
+  const persistProcessedBuffer = useCallback(
+    async (buffer, analysis, sourceFileName, presetLabel) => {
+      try {
+        const wavBlob = encodeWav16Bit(buffer);
+        const baseName = (sourceFileName || 'audio')
+          .replace(/\s*\(synthetic\)$/i, '')
+          .replace(/\.[^/.]+$/, '');
+        const record = {
+          id: `proc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          store: STORE_PROCESSED,
+          name: `${baseName}_mastered.wav`,
+          sourceName: sourceFileName || 'audio',
+          presetLabel,
+          createdAt: Date.now(),
+          duration: analysis.duration,
+          sampleRate: analysis.sampleRate,
+          channels: analysis.channels,
+          integratedLufs: analysis.integratedLufs,
+          peakDb: analysis.peakDb,
+          rmsDb: analysis.rmsDb,
+          sizeBytes: wavBlob.size,
+          wavBlob,
+        };
+        await saveClipToStore(STORE_PROCESSED, record);
+        setActiveProcessedId(record.id);
+        await refreshStorageLists();
+        return record;
+      } catch (err) {
+        console.warn('Could not save processed clip to IndexedDB:', err);
+        return null;
+      }
+    },
+    [refreshStorageLists]
+  );
+
+  const handleRecordingComplete = useCallback(
+    (recordedBuffer) => {
+      setErrorMessage(null);
+      setIsDecoding(true);
+      setTimeout(async () => {
+        try {
+          const analysis = analyzeAudioBuffer(recordedBuffer);
+          const now = new Date();
+          const stamp = [
+            String(now.getHours()).padStart(2, '0'),
+            String(now.getMinutes()).padStart(2, '0'),
+            String(now.getSeconds()).padStart(2, '0'),
+          ].join('');
+          const recordingName = `mic_recording_${stamp}.wav`;
+
+          setFileInfo({
+            name: recordingName,
+            size: recordedBuffer.length * recordedBuffer.numberOfChannels * 2 + 44,
+          });
+          setOriginalBuffer(recordedBuffer);
+          setOriginalAnalysis(analysis);
+          setProcessedBuffer(null);
+          setProcessedAnalysis(null);
+          setProcessingReport(null);
+          setActiveProcessedId(null);
+
+          // Automatically persist raw mic recording into Original Storage
+          await persistOriginalBuffer(recordedBuffer, analysis, recordingName);
+        } catch (err) {
+          console.error('Recorded audio analysis error:', err);
+          setErrorMessage(
+            'Could not analyze the recorded audio clip. Please try recording again.'
+          );
+        } finally {
+          setIsDecoding(false);
+        }
+      }, 16);
+    },
+    [persistOriginalBuffer]
+  );
 
   const {
     isRecording,
@@ -189,6 +299,8 @@ export default function App() {
         setProcessedBuffer(null);
         setProcessedAnalysis(null);
         setProcessingReport(null);
+        setActiveOriginalId(null);
+        setActiveProcessedId(null);
       } catch (err) {
         console.error('Audio decode error:', err);
         setErrorMessage(
@@ -217,6 +329,8 @@ export default function App() {
         setProcessedBuffer(null);
         setProcessedAnalysis(null);
         setProcessingReport(null);
+        setActiveOriginalId(null);
+        setActiveProcessedId(null);
       } catch (err) {
         console.error('Demo generation error:', err);
         setErrorMessage('Failed to initialize Web Audio API context for the demo clip.');
@@ -257,6 +371,17 @@ export default function App() {
       setProcessedAnalysis(afterAnalysis);
       setProcessingReport(report);
       setProgress({ percent: 100, stage: 'Complete' });
+
+      // Auto-save processed output into separate Processed Storage (guard >45MB WAVs)
+      const estWavBytes = outBuffer.length * outBuffer.numberOfChannels * 2 + 44;
+      if (estWavBytes <= 45 * 1024 * 1024) {
+        const presetLabel = activePresetId && PRESETS[activePresetId]
+          ? PRESETS[activePresetId].label
+          : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
+        await persistProcessedBuffer(outBuffer, afterAnalysis, fileInfo?.name, presetLabel);
+      } else {
+        setActiveProcessedId(null);
+      }
     } catch (err) {
       console.error('Processing error:', err);
       setErrorMessage(
@@ -265,28 +390,152 @@ export default function App() {
     } finally {
       setIsProcessing(false);
     }
-  }, [originalBuffer, isProcessing, options, pause]);
+  }, [
+    originalBuffer,
+    isProcessing,
+    options,
+    pause,
+    activePresetId,
+    fileInfo,
+    persistProcessedBuffer,
+  ]);
+
+  const handleDownloadOriginalWav = useCallback(() => {
+    if (!originalBuffer) return;
+    try {
+      const wavBlob = encodeWav16Bit(originalBuffer);
+      const baseName = (fileInfo?.name || 'recording')
+        .replace(/\s*\(synthetic\)$/i, '')
+        .replace(/\.[^/.]+$/, '');
+      triggerBlobDownload(wavBlob, `${baseName}_original.wav`);
+    } catch (err) {
+      console.error('Original WAV export error:', err);
+      setErrorMessage('Failed to encode original 16-bit WAV file for download.');
+    }
+  }, [originalBuffer, fileInfo]);
 
   const handleDownloadWav = useCallback(() => {
     if (!processedBuffer) return;
     try {
       const wavBlob = encodeWav16Bit(processedBuffer);
-      const url = URL.createObjectURL(wavBlob);
       const baseName = (fileInfo?.name || 'audio')
         .replace(/\s*\(synthetic\)$/i, '')
         .replace(/\.[^/.]+$/, '');
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${baseName}_mastered.wav`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      triggerBlobDownload(wavBlob, `${baseName}_mastered.wav`);
     } catch (err) {
       console.error('WAV export error:', err);
       setErrorMessage('Failed to encode 16-bit WAV file for download.');
     }
   }, [processedBuffer, fileInfo]);
+
+  const handleSaveCurrentOriginal = useCallback(async () => {
+    if (!originalBuffer || !originalAnalysis) return;
+    const baseName = (fileInfo?.name || 'original_audio')
+      .replace(/\s*\(synthetic\)$/i, '')
+      .replace(/\.[^/.]+$/, '');
+    await persistOriginalBuffer(originalBuffer, originalAnalysis, `${baseName}_original.wav`);
+  }, [originalBuffer, originalAnalysis, fileInfo, persistOriginalBuffer]);
+
+  const handleSaveCurrentProcessed = useCallback(async () => {
+    if (!processedBuffer || !processedAnalysis) return;
+    const presetLabel =
+      activePresetId && PRESETS[activePresetId]
+        ? PRESETS[activePresetId].label
+        : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
+    await persistProcessedBuffer(processedBuffer, processedAnalysis, fileInfo?.name, presetLabel);
+  }, [
+    processedBuffer,
+    processedAnalysis,
+    activePresetId,
+    options,
+    fileInfo,
+    persistProcessedBuffer,
+  ]);
+
+  const handleLoadOriginalClip = useCallback(
+    async (clip) => {
+      if (!clip?.wavBlob) return;
+      setErrorMessage(null);
+      setIsDecoding(true);
+      pause();
+      try {
+        const arrBuf = await clip.wavBlob.arrayBuffer();
+        const audioCtx = getAudioContext();
+        const decoded = await audioCtx.decodeAudioData(arrBuf.slice(0));
+        const analysis = analyzeAudioBuffer(decoded);
+        setFileInfo({ name: clip.name, size: clip.sizeBytes });
+        setOriginalBuffer(decoded);
+        setOriginalAnalysis(analysis);
+        setActiveOriginalId(clip.id);
+      } catch (err) {
+        console.error('Failed to load stored original clip:', err);
+        setErrorMessage(`Could not load "${clip.name}" from Original Storage.`);
+      } finally {
+        setIsDecoding(false);
+      }
+    },
+    [getAudioContext, pause]
+  );
+
+  const handleLoadProcessedClip = useCallback(
+    async (clip) => {
+      if (!clip?.wavBlob) return;
+      setErrorMessage(null);
+      setIsDecoding(true);
+      pause();
+      try {
+        const arrBuf = await clip.wavBlob.arrayBuffer();
+        const audioCtx = getAudioContext();
+        const decoded = await audioCtx.decodeAudioData(arrBuf.slice(0));
+        const analysis = analyzeAudioBuffer(decoded);
+        setProcessedBuffer(decoded);
+        setProcessedAnalysis(analysis);
+        setProcessingReport(null);
+        setActiveProcessedId(clip.id);
+      } catch (err) {
+        console.error('Failed to load stored processed clip:', err);
+        setErrorMessage(`Could not load "${clip.name}" from Processed Storage.`);
+      } finally {
+        setIsDecoding(false);
+      }
+    },
+    [getAudioContext, pause]
+  );
+
+  const handleDownloadStoredClip = useCallback((clip) => {
+    if (!clip?.wavBlob) return;
+    triggerBlobDownload(clip.wavBlob, clip.name);
+  }, []);
+
+  const handleDeleteOriginalClip = useCallback(
+    async (id) => {
+      await deleteClipFromStore(STORE_ORIGINALS, id);
+      if (activeOriginalId === id) setActiveOriginalId(null);
+      await refreshStorageLists();
+    },
+    [activeOriginalId, refreshStorageLists]
+  );
+
+  const handleDeleteProcessedClip = useCallback(
+    async (id) => {
+      await deleteClipFromStore(STORE_PROCESSED, id);
+      if (activeProcessedId === id) setActiveProcessedId(null);
+      await refreshStorageLists();
+    },
+    [activeProcessedId, refreshStorageLists]
+  );
+
+  const handleClearOriginals = useCallback(async () => {
+    await clearStore(STORE_ORIGINALS);
+    setActiveOriginalId(null);
+    await refreshStorageLists();
+  }, [refreshStorageLists]);
+
+  const handleClearProcessed = useCallback(async () => {
+    await clearStore(STORE_PROCESSED);
+    setActiveProcessedId(null);
+    await refreshStorageLists();
+  }, [refreshStorageLists]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#090D16] text-slate-900 dark:text-slate-100">
@@ -321,6 +570,12 @@ export default function App() {
               className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
               Visualizers
+            </a>
+            <a
+              href="#storage"
+              className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
+            >
+              Storage
             </a>
             <a
               href="#how-it-works"
@@ -368,6 +623,7 @@ export default function App() {
         onLoadDemo={handleLoadDemo}
         onStartRecording={handleStartRecording}
         onStopRecording={stopRecording}
+        onDownloadOriginalWav={handleDownloadOriginalWav}
         theme={theme}
         onToggleTheme={handleToggleTheme}
         fileInputRef={fileInputRef}
@@ -389,7 +645,7 @@ export default function App() {
             processingReport={processingReport}
           />
 
-          {/* Right Analysis, A/B Transport & Visualization Stage */}
+          {/* Right Analysis, A/B Transport, Visualization & Comparison Storage Stage */}
           <div className="space-y-6 min-w-0">
             <TransportDeck
               originalDuration={originalBuffer?.duration || 0}
@@ -401,6 +657,7 @@ export default function App() {
               hasProcessed={Boolean(processedBuffer)}
               onTogglePlayTrack={togglePlayTrack}
               onSeek={seek}
+              onDownloadOriginalWav={handleDownloadOriginalWav}
               onDownloadWav={handleDownloadWav}
             />
 
@@ -418,6 +675,24 @@ export default function App() {
               originalAnalysis={originalAnalysis}
               processedAnalysis={processedAnalysis}
               options={options}
+            />
+
+            <StorageLibrary
+              originalClips={originalClips}
+              processedClips={processedClips}
+              activeOriginalId={activeOriginalId}
+              activeProcessedId={activeProcessedId}
+              hasOriginal={Boolean(originalBuffer)}
+              hasProcessed={Boolean(processedBuffer)}
+              onSaveCurrentOriginal={handleSaveCurrentOriginal}
+              onSaveCurrentProcessed={handleSaveCurrentProcessed}
+              onLoadOriginalClip={handleLoadOriginalClip}
+              onLoadProcessedClip={handleLoadProcessedClip}
+              onDownloadClip={handleDownloadStoredClip}
+              onDeleteOriginalClip={handleDeleteOriginalClip}
+              onDeleteProcessedClip={handleDeleteProcessedClip}
+              onClearOriginals={handleClearOriginals}
+              onClearProcessed={handleClearProcessed}
             />
           </div>
         </div>

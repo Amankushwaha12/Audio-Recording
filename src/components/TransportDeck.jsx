@@ -19,6 +19,7 @@ export default function TransportDeck({
   hasProcessed,
   onTogglePlayTrack,
   onSeek,
+  onDownloadOriginalWav,
   onDownloadWav,
 }) {
   const activeDuration =
@@ -80,16 +81,30 @@ export default function TransportDeck({
           </span>
         </div>
 
-        {/* Download Processed WAV */}
-        <button
-          type="button"
-          disabled={!hasProcessed}
-          onClick={onDownloadWav}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0D1320] text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <Download className="w-3.5 h-3.5 text-sky-600 dark:text-cyan-400" />
-          Download 16-bit WAV
-        </button>
+        {/* Download Original & Processed WAV */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            disabled={!hasOriginal}
+            onClick={onDownloadOriginalWav}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0D1320] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Download the original / raw recording as a 16-bit WAV file"
+          >
+            <Download className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+            Original WAV
+          </button>
+
+          <button
+            type="button"
+            disabled={!hasProcessed}
+            onClick={onDownloadWav}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0D1320] text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Download the processed / mastered result as a 16-bit WAV file"
+          >
+            <Download className="w-3.5 h-3.5 text-sky-600 dark:text-cyan-400" />
+            Processed WAV
+          </button>
+        </div>
       </div>
 
       {/* Shared Seek Scrubber & Timecode */}

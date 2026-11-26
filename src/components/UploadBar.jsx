@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Upload, AudioLines, Sun, Moon, AlertTriangle, X, Mic, Square } from 'lucide-react';
+import { Upload, AudioLines, Sun, Moon, AlertTriangle, X, Mic, Square, Download } from 'lucide-react';
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB recommended local limit
 const SUPPORTED_EXTENSIONS = ['mp3', 'wav', 'm4a'];
@@ -30,6 +30,7 @@ export default function UploadBar({
   onLoadDemo,
   onStartRecording,
   onStopRecording,
+  onDownloadOriginalWav,
   theme,
   onToggleTheme,
   fileInputRef,
@@ -194,6 +195,18 @@ export default function UploadBar({
               >
                 <Mic className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
                 Record Mic
+              </button>
+            )}
+
+            {originalAnalysis && !isRecording && (
+              <button
+                type="button"
+                onClick={onDownloadOriginalWav}
+                className="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#111827] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                title="Download the original raw recording as 16-bit WAV"
+              >
+                <Download className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                Download Original
               </button>
             )}
 
