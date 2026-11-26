@@ -1,0 +1,6 @@
+{
+  "name": "Mini Audio Mastering Lab",
+  "description": "Browser-based automatic audio post-production and mastering laboratory using the Web Audio API for analysis, DSP processing, A/B comparison, and 16-bit WAV export.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
