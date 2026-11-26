@@ -29,13 +29,49 @@ import {
 } from './analyzer.js';
 
 /**
- * Default settings and three one-click mastering presets.
+ * Curated mastering presets covering both Current DSP and DeepFilterNet3 engines.
  */
 export const PRESETS = {
+  studioAi: {
+    id: 'studioAi',
+    label: 'Studio AI Master',
+    summary: 'Best all-around: DeepFilterNet3 neural cleanup + -16 LUFS broadcast polish',
+    recommendedEngine: 'deepfilternet',
+    dfOptions: {
+      attenuationLimit: 85,
+      postFilterBeta: 0.02,
+      chainMastering: true,
+    },
+    options: {
+      highPassEnabled: true,
+      highPassFreq: 85,
+      noiseGateEnabled: true,
+      noiseGateReductionDb: 14,
+      noiseGateMarginDb: 6,
+      compressorEnabled: true,
+      compThresholdDb: -20,
+      compRatio: 2.6,
+      compAttackMs: 10,
+      compReleaseMs: 130,
+      levelerEnabled: true,
+      levelerStrength: 0.8,
+      normalizeEnabled: true,
+      normalizeMode: 'lufs',
+      targetLoudness: -16,
+      limiterCeilingDbtp: -1.0,
+      silenceTrimEnabled: false,
+      silenceMaxPauseSec: 1.1,
+    },
+  },
   podcast: {
     id: 'podcast',
     label: 'Podcast',
-    summary: '-16 LUFS, light compression, noise gate on',
+    summary: '-16 LUFS, light compression, balanced auto-leveler, -1.0 dBTP ceiling',
+    dfOptions: {
+      attenuationLimit: 65,
+      postFilterBeta: 0.015,
+      chainMastering: true,
+    },
     options: {
       highPassEnabled: true,
       highPassFreq: 80,
@@ -60,7 +96,12 @@ export const PRESETS = {
   audiobook: {
     id: 'audiobook',
     label: 'Audiobook',
-    summary: '-20 dBFS RMS style, gentle leveling, strict -3 dBTP limit',
+    summary: 'ACX style: -20 dBFS RMS, gentle leveling, strict -3.0 dBTP peak ceiling',
+    dfOptions: {
+      attenuationLimit: 42,
+      postFilterBeta: 0.01,
+      chainMastering: true,
+    },
     options: {
       highPassEnabled: true,
       highPassFreq: 75,
@@ -82,10 +123,75 @@ export const PRESETS = {
       silenceMaxPauseSec: 1.5,
     },
   },
+  youtube: {
+    id: 'youtube',
+    label: 'YouTube / Reels',
+    summary: 'Punchy -14 LUFS voiceover, crisp 3.2:1 compression, trims pauses >0.8 s',
+    dfOptions: {
+      attenuationLimit: 80,
+      postFilterBeta: 0.025,
+      chainMastering: true,
+    },
+    options: {
+      highPassEnabled: true,
+      highPassFreq: 85,
+      noiseGateEnabled: true,
+      noiseGateReductionDb: 16,
+      noiseGateMarginDb: 6,
+      compressorEnabled: true,
+      compThresholdDb: -18,
+      compRatio: 3.2,
+      compAttackMs: 6,
+      compReleaseMs: 110,
+      levelerEnabled: true,
+      levelerStrength: 0.85,
+      normalizeEnabled: true,
+      normalizeMode: 'lufs',
+      targetLoudness: -14,
+      limiterCeilingDbtp: -1.0,
+      silenceTrimEnabled: true,
+      silenceMaxPauseSec: 0.8,
+    },
+  },
+  broadcast: {
+    id: 'broadcast',
+    label: 'Broadcast EBU',
+    summary: 'EBU R128 / TV standard: -23 LUFS, natural dynamics, -1.0 dBTP ceiling',
+    dfOptions: {
+      attenuationLimit: 50,
+      postFilterBeta: 0.015,
+      chainMastering: true,
+    },
+    options: {
+      highPassEnabled: true,
+      highPassFreq: 80,
+      noiseGateEnabled: true,
+      noiseGateReductionDb: 10,
+      noiseGateMarginDb: 5,
+      compressorEnabled: true,
+      compThresholdDb: -24,
+      compRatio: 2.2,
+      compAttackMs: 15,
+      compReleaseMs: 160,
+      levelerEnabled: true,
+      levelerStrength: 0.65,
+      normalizeEnabled: true,
+      normalizeMode: 'lufs',
+      targetLoudness: -23,
+      limiterCeilingDbtp: -1.0,
+      silenceTrimEnabled: false,
+      silenceMaxPauseSec: 1.5,
+    },
+  },
   noisy: {
     id: 'noisy',
-    label: 'Noisy recording',
-    summary: 'Strong noise gate, 100 Hz high-pass, firm auto-leveler',
+    label: 'Noisy Recording',
+    summary: 'Heavy rescue: 100 Hz HPF, max noise reduction, firm leveler, trims >1.0 s',
+    dfOptions: {
+      attenuationLimit: 100,
+      postFilterBeta: 0.035,
+      chainMastering: true,
+    },
     options: {
       highPassEnabled: true,
       highPassFreq: 100,
@@ -110,6 +216,7 @@ export const PRESETS = {
 };
 
 export const LOUDNESS_PRESETS = [
+  { id: 'youtube-14', label: 'YouTube (-14 LUFS)', mode: 'lufs', target: -14 },
   { id: 'podcast-16', label: 'Podcast (-16 LUFS)', mode: 'lufs', target: -16 },
   { id: 'broadcast-23', label: 'Broadcast (-23 LUFS)', mode: 'lufs', target: -23 },
   { id: 'audiobook-20', label: 'Audiobook (-20 RMS)', mode: 'rms', target: -20 },

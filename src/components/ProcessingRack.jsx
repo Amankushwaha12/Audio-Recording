@@ -1,5 +1,5 @@
 import React from 'react';
-import { SlidersHorizontal, Play, RotateCcw } from 'lucide-react';
+import { SlidersHorizontal, Play, RotateCcw, Cpu } from 'lucide-react';
 import { LOUDNESS_PRESETS, PRESETS } from '../audio/processor.js';
 
 function SliderField({
@@ -93,6 +93,10 @@ function StageSection({ indexLabel, title, checked, onToggle, subtitle, children
 }
 
 export default function ProcessingRack({
+  processingEngine,
+  onChangeEngine,
+  dfOptions,
+  onChangeDfOption,
   options,
   activePresetId,
   onApplyPreset,
@@ -103,6 +107,9 @@ export default function ProcessingRack({
   hasAudio,
   processingReport,
 }) {
+  const isDeepFilter = processingEngine === 'deepfilternet';
+  const showMasteringStages = !isDeepFilter || dfOptions.chainMastering;
+
   return (
     <aside
       aria-label="Processing chain controls"
@@ -128,15 +135,117 @@ export default function ProcessingRack({
           </button>
         </div>
 
-        {/* One-click mastering presets */}
+        {/* Engine Selector: Current DSP vs DeepFilterNet3 */}
         <div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mb-1.5">
-            One-click presets
+            Processing engine
           </p>
           <div
             role="group"
+            aria-label="Processing engine"
+            className="grid grid-cols-2 gap-1 p-1 bg-slate-100 dark:bg-[#090D16] rounded-md border border-slate-200/80 dark:border-slate-800"
+          >
+            <button
+              type="button"
+              onClick={() => onChangeEngine('dsp')}
+              className={`px-2.5 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap truncate cursor-pointer ${
+                !isDeepFilter
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              Current DSP
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeEngine('deepfilternet')}
+              className={`px-2.5 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap truncate cursor-pointer ${
+                isDeepFilter
+                  ? 'bg-white dark:bg-slate-800 text-sky-700 dark:text-cyan-300 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              DeepFilterNet3
+            </button>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">
+            {isDeepFilter
+              ? '48 kHz neural speech denoiser (WASM) — removes noise even during speech'
+              : 'Classic 6-stage deterministic Web Audio DSP mastering pipeline'}
+          </p>
+        </div>
+
+        {/* DeepFilterNet3 Neural Controls (when DeepFilterNet3 engine is active) */}
+        {isDeepFilter && (
+          <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
+                <Cpu className="w-3.5 h-3.5 text-sky-600 dark:text-cyan-400" />
+                DeepFilterNet3 Neural Stage
+              </div>
+              <span className="text-[11px] font-mono text-sky-700 dark:text-cyan-400">
+                48 kHz WASM
+              </span>
+            </div>
+
+            <SliderField
+              id="df-atten"
+              label="Max noise attenuation"
+              value={dfOptions.attenuationLimit}
+              displayValue={`${dfOptions.attenuationLimit} dB`}
+              min={6}
+              max={100}
+              step={2}
+              disabled={false}
+              onChange={(val) => onChangeDfOption('attenuationLimit', val)}
+            />
+
+            <SliderField
+              id="df-beta"
+              label="Post-filter strength (beta)"
+              value={dfOptions.postFilterBeta}
+              displayValue={dfOptions.postFilterBeta.toFixed(3)}
+              min={0}
+              max={0.05}
+              step={0.005}
+              disabled={false}
+              onChange={(val) => onChangeDfOption('postFilterBeta', val)}
+            />
+
+            <label className="flex items-start gap-2.5 pt-1 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={dfOptions.chainMastering}
+                onChange={(e) => onChangeDfOption('chainMastering', e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-slate-300 dark:border-slate-600 accent-sky-600 dark:accent-cyan-500 cursor-pointer"
+              />
+              <span className="text-xs text-slate-600 dark:text-slate-300 leading-snug">
+                Follow with mastering stages (HPF, Compressor, Leveler, LUFS Norm &amp; Limiter)
+              </span>
+            </label>
+
+            {processingReport?.deepFilterElapsedMs != null && (
+              <p className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                DeepFilterNet3 runtime: {(processingReport.deepFilterElapsedMs / 1000).toFixed(2)} s
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* One-click mastering presets */}
+        <div className={isDeepFilter ? 'pt-3 border-t border-slate-200 dark:border-slate-800' : ''}>
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              One-click presets
+            </p>
+            <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500">
+              6 profiles
+            </span>
+          </div>
+          <div
+            role="group"
             aria-label="Mastering presets"
-            className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-[#090D16] rounded-md border border-slate-200/80 dark:border-slate-800"
+            className="grid grid-cols-2 gap-1 p-1 bg-slate-100 dark:bg-[#090D16] rounded-md border border-slate-200/80 dark:border-slate-800"
           >
             {Object.values(PRESETS).map((preset) => {
               const active = activePresetId === preset.id;
@@ -147,7 +256,7 @@ export default function ProcessingRack({
                   onClick={() => onApplyPreset(preset.id)}
                   className={`px-2 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap truncate cursor-pointer ${
                     active
-                      ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
+                      ? 'bg-white dark:bg-slate-800 text-sky-700 dark:text-cyan-300 shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                   title={preset.summary}
@@ -158,7 +267,7 @@ export default function ProcessingRack({
             })}
           </div>
           {activePresetId && PRESETS[activePresetId] ? (
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-snug">
               {PRESETS[activePresetId].summary}
             </p>
           ) : (
@@ -170,7 +279,8 @@ export default function ProcessingRack({
       </div>
 
       {/* Ordered DSP Stages (a through f) */}
-      <div className="px-4 py-1 divide-y-0">
+      {showMasteringStages ? (
+        <div className="px-4 py-1 divide-y-0">
         {/* Stage a: High-pass filter */}
         <StageSection
           indexLabel="a."
@@ -192,43 +302,55 @@ export default function ProcessingRack({
           />
         </StageSection>
 
-        {/* Stage b: Noise gate / noise reduction */}
-        <StageSection
-          indexLabel="b."
-          title="Noise Gate / Reduction"
-          subtitle="Estimates noise floor & smoothly attenuates quiet pauses"
-          checked={options.noiseGateEnabled}
-          onToggle={(val) => onChangeOption('noiseGateEnabled', val)}
-        >
-          <SliderField
-            id="gate-reduction"
-            label="Reduction amount"
-            value={options.noiseGateReductionDb}
-            displayValue={`-${options.noiseGateReductionDb} dB`}
-            min={0}
-            max={36}
-            step={1}
-            disabled={!options.noiseGateEnabled}
-            onChange={(val) => onChangeOption('noiseGateReductionDb', val)}
-          />
-          <SliderField
-            id="gate-margin"
-            label="Threshold above floor"
-            value={options.noiseGateMarginDb}
-            displayValue={`+${options.noiseGateMarginDb} dB`}
-            min={2}
-            max={16}
-            step={1}
-            disabled={!options.noiseGateEnabled}
-            onChange={(val) => onChangeOption('noiseGateMarginDb', val)}
-          />
-          {processingReport?.estimatedNoiseFloorDb != null && (
-            <p className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
-              Detected floor: {processingReport.estimatedNoiseFloorDb.toFixed(1)} dBFS · Gate at{' '}
-              {processingReport.gateThresholdDb.toFixed(1)} dBFS
-            </p>
-          )}
-        </StageSection>
+        {/* Stage b: Noise gate / noise reduction (bypassed when DeepFilterNet3 handles denoising) */}
+        {isDeepFilter ? (
+          <div className="py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+            <div>
+              <span className="font-mono mr-1.5">b.</span>
+              <span className="font-medium text-slate-700 dark:text-slate-300">
+                Noise Gate replaced by DeepFilterNet3
+              </span>
+            </div>
+            <span className="font-mono text-sky-700 dark:text-cyan-400 shrink-0">Neural</span>
+          </div>
+        ) : (
+          <StageSection
+            indexLabel="b."
+            title="Noise Gate / Reduction"
+            subtitle="Estimates noise floor & smoothly attenuates quiet pauses"
+            checked={options.noiseGateEnabled}
+            onToggle={(val) => onChangeOption('noiseGateEnabled', val)}
+          >
+            <SliderField
+              id="gate-reduction"
+              label="Reduction amount"
+              value={options.noiseGateReductionDb}
+              displayValue={`-${options.noiseGateReductionDb} dB`}
+              min={0}
+              max={36}
+              step={1}
+              disabled={!options.noiseGateEnabled}
+              onChange={(val) => onChangeOption('noiseGateReductionDb', val)}
+            />
+            <SliderField
+              id="gate-margin"
+              label="Threshold above floor"
+              value={options.noiseGateMarginDb}
+              displayValue={`+${options.noiseGateMarginDb} dB`}
+              min={2}
+              max={16}
+              step={1}
+              disabled={!options.noiseGateEnabled}
+              onChange={(val) => onChangeOption('noiseGateMarginDb', val)}
+            />
+            {processingReport?.estimatedNoiseFloorDb != null && (
+              <p className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                Detected floor: {processingReport.estimatedNoiseFloorDb.toFixed(1)} dBFS · Gate at{' '}
+                {processingReport.gateThresholdDb.toFixed(1)} dBFS
+              </p>
+            )}
+          </StageSection>
+        )}
 
         {/* Stage c: Compressor */}
         <StageSection
@@ -411,6 +533,13 @@ export default function ProcessingRack({
           )}
         </StageSection>
       </div>
+      ) : (
+        <div className="px-4 py-4 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+          Pure DeepFilterNet3 mode active — outputs raw neural speech enhancement without
+          additional compression, leveling, or loudness normalization so you can compare neural
+          denoising directly against the original recording.
+        </div>
+      )}
 
       {/* Anchored Process Action & Progress Indicator */}
       <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#0D1320] rounded-b-lg space-y-3">
@@ -421,7 +550,11 @@ export default function ProcessingRack({
           className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-md bg-sky-600 hover:bg-sky-700 dark:bg-cyan-500 dark:hover:bg-cyan-400 text-white dark:text-slate-950 transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap"
         >
           <Play className="w-4 h-4 fill-current" />
-          {isProcessing ? 'Processing...' : 'Process Audio'}
+          {isProcessing
+            ? 'Processing...'
+            : isDeepFilter
+              ? 'Process with DeepFilterNet3'
+              : 'Process with Current DSP'}
         </button>
 
         {isProcessing && (

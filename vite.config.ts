@@ -28,6 +28,9 @@ export default defineConfig(() => {
         },
       },
     ],
+    optimizeDeps: {
+      exclude: ['@lofcz/deepfilternet-web'],
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

@@ -9,9 +9,9 @@ const STAGES = [
   },
   {
     index: 'b.',
-    name: 'Noise Gate & Reduction',
+    name: 'Noise Gate or DeepFilterNet3 Neural Denoising',
     description:
-      'Measures the quietest 10% of 50 ms audio frames to estimate your room noise floor, then smoothly attenuates silent gaps below that threshold using soft-knee attack, hold, and release envelopes.',
+      'In Current DSP mode, estimates your room noise floor from the quietest 10% of frames and gates pauses smoothly. Switch to DeepFilterNet3 to run a 48 kHz WebAssembly neural network that suppresses background hiss and hum even while you are actively speaking.',
   },
   {
     index: 'c.',

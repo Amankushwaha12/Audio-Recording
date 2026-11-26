@@ -7,6 +7,7 @@ import {
   generateDemoAudioBuffer,
   processAudioBuffer,
 } from './audio/processor.js';
+import { denoiseWithDeepFilterNet } from './audio/deepfilter.js';
 import {
   STORE_ORIGINALS,
   STORE_PROCESSED,
@@ -41,6 +42,13 @@ export default function App() {
   const [originalAnalysis, setOriginalAnalysis] = useState(null);
   const [processedAnalysis, setProcessedAnalysis] = useState(null);
   const [processingReport, setProcessingReport] = useState(null);
+
+  const [processingEngine, setProcessingEngine] = useState('dsp'); // 'dsp' | 'deepfilternet'
+  const [dfOptions, setDfOptions] = useState({
+    attenuationLimit: 80,
+    postFilterBeta: 0.02,
+    chainMastering: true,
+  });
 
   const [activePresetId, setActivePresetId] = useState('podcast');
   const [options, setOptions] = useState(() => ({ ...PRESETS.podcast.options }));
@@ -345,6 +353,12 @@ export default function App() {
     if (!preset) return;
     setActivePresetId(presetId);
     setOptions({ ...preset.options });
+    if (preset.dfOptions) {
+      setDfOptions({ ...preset.dfOptions });
+    }
+    if (preset.recommendedEngine) {
+      setProcessingEngine(preset.recommendedEngine);
+    }
   }, []);
 
   const handleChangeOption = useCallback((key, value) => {
@@ -352,19 +366,74 @@ export default function App() {
     setOptions((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  const handleChangeDfOption = useCallback((key, value) => {
+    setDfOptions((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
   const handleProcess = useCallback(async () => {
     if (!originalBuffer || isProcessing) return;
     setErrorMessage(null);
     setIsProcessing(true);
-    setProgress({ percent: 4, stage: 'Preparing PCM channel buffers...' });
+    setProgress({
+      percent: 4,
+      stage:
+        processingEngine === 'deepfilternet'
+          ? 'Initializing DeepFilterNet3 neural engine...'
+          : 'Preparing PCM channel buffers...',
+    });
     pause();
 
     try {
-      const { audioBuffer: outBuffer, report } = await processAudioBuffer(
-        originalBuffer,
-        options,
-        (prog) => setProgress(prog)
-      );
+      let outBuffer;
+      let report = {};
+      let storageTag = '';
+
+      if (processingEngine === 'deepfilternet') {
+        const dfRes = await denoiseWithDeepFilterNet(
+          originalBuffer,
+          dfOptions,
+          (prog) => {
+            const scaledPct = dfOptions.chainMastering
+              ? Math.round(prog.percent * 0.65)
+              : Math.min(96, prog.percent);
+            setProgress({ percent: scaledPct, stage: prog.stage });
+          }
+        );
+
+        if (dfOptions.chainMastering) {
+          const postRes = await processAudioBuffer(
+            dfRes.audioBuffer,
+            { ...options, noiseGateEnabled: false },
+            (prog) => {
+              const scaledPct = Math.round(65 + prog.percent * 0.33);
+              setProgress({ percent: scaledPct, stage: prog.stage });
+            }
+          );
+          outBuffer = postRes.audioBuffer;
+          report = { ...postRes.report, deepFilterElapsedMs: dfRes.elapsedMs };
+          const presetPart =
+            activePresetId && PRESETS[activePresetId]
+              ? PRESETS[activePresetId].label
+              : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
+          storageTag = `DeepFilterNet3 + ${presetPart}`;
+        } else {
+          outBuffer = dfRes.audioBuffer;
+          report = { deepFilterElapsedMs: dfRes.elapsedMs };
+          storageTag = `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`;
+        }
+      } else {
+        const res = await processAudioBuffer(originalBuffer, options, (prog) =>
+          setProgress(prog)
+        );
+        outBuffer = res.audioBuffer;
+        report = res.report;
+        const presetPart =
+          activePresetId && PRESETS[activePresetId]
+            ? PRESETS[activePresetId].label
+            : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
+        storageTag = `Current DSP · ${presetPart}`;
+      }
+
       const afterAnalysis = analyzeAudioBuffer(outBuffer);
 
       setProcessedBuffer(outBuffer);
@@ -375,17 +444,16 @@ export default function App() {
       // Auto-save processed output into separate Processed Storage (guard >45MB WAVs)
       const estWavBytes = outBuffer.length * outBuffer.numberOfChannels * 2 + 44;
       if (estWavBytes <= 45 * 1024 * 1024) {
-        const presetLabel = activePresetId && PRESETS[activePresetId]
-          ? PRESETS[activePresetId].label
-          : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
-        await persistProcessedBuffer(outBuffer, afterAnalysis, fileInfo?.name, presetLabel);
+        await persistProcessedBuffer(outBuffer, afterAnalysis, fileInfo?.name, storageTag);
       } else {
         setActiveProcessedId(null);
       }
     } catch (err) {
       console.error('Processing error:', err);
       setErrorMessage(
-        'An unexpected error occurred while processing the audio buffer. Try a shorter clip or fewer simultaneous stages.'
+        processingEngine === 'deepfilternet'
+          ? `DeepFilterNet3 processing failed (${err?.message || 'WASM error'}). Ensure WebAssembly SIMD is supported in your browser, or switch to Current DSP.`
+          : 'An unexpected error occurred while processing the audio buffer. Try a shorter clip or fewer simultaneous stages.'
       );
     } finally {
       setIsProcessing(false);
@@ -393,6 +461,8 @@ export default function App() {
   }, [
     originalBuffer,
     isProcessing,
+    processingEngine,
+    dfOptions,
     options,
     pause,
     activePresetId,
@@ -438,14 +508,22 @@ export default function App() {
 
   const handleSaveCurrentProcessed = useCallback(async () => {
     if (!processedBuffer || !processedAnalysis) return;
-    const presetLabel =
+    const presetPart =
       activePresetId && PRESETS[activePresetId]
         ? PRESETS[activePresetId].label
         : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
+    const presetLabel =
+      processingEngine === 'deepfilternet'
+        ? dfOptions.chainMastering
+          ? `DeepFilterNet3 + ${presetPart}`
+          : `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`
+        : `Current DSP · ${presetPart}`;
     await persistProcessedBuffer(processedBuffer, processedAnalysis, fileInfo?.name, presetLabel);
   }, [
     processedBuffer,
     processedAnalysis,
+    processingEngine,
+    dfOptions,
     activePresetId,
     options,
     fileInfo,
@@ -634,6 +712,10 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-6 items-start">
           {/* Left Parameter & Processing Column */}
           <ProcessingRack
+            processingEngine={processingEngine}
+            onChangeEngine={setProcessingEngine}
+            dfOptions={dfOptions}
+            onChangeDfOption={handleChangeDfOption}
             options={options}
             activePresetId={activePresetId}
             onApplyPreset={handleApplyPreset}
