@@ -8,15 +8,111 @@
  * + complex deep filtering) so it can remove steady fan hum, traffic, keyboard
  * clicks, and room hiss *even while someone is actively talking*.
  *
- * Everything executes locally in your browser via WebAssembly (@lofcz/deepfilternet-web)
- * with zero backend server calls.
+ * Asset transport note:
+ * The full DeepFilterNet3 WASM binary with baked neural weights is ~34.1 MB raw,
+ * which exceeds standard 32 MB HTTP proxy caps and is slow to download raw.
+ * We serve it pre-compressed as `/df_bg.wasm.bin` (~12.6 MB gzip), decompress it
+ * natively in the browser via `DecompressionStream('gzip')`, and cache the
+ * compiled WASM module in memory for instant subsequent runs.
  */
 
 import { DeepFilter, SAMPLE_RATE as DF_SAMPLE_RATE } from '@lofcz/deepfilternet-web';
-import dfWasmUrl from '@lofcz/deepfilternet-web/df_bg.wasm?url';
+
+let wasmReady = false;
+let wasmBlobUrlPromise = null;
 
 function yieldToUI() {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Fetches the ~12.6 MB gzipped DeepFilterNet3 WASM binary, decompresses it
+ * natively in the browser, and returns a local `blob:` URL with `application/wasm`
+ * MIME type. Cached after the first load so subsequent runs are instantaneous.
+ */
+async function ensureDeepFilterWasmUrl(onProgress) {
+  if (wasmReady) {
+    return undefined; // Already initialized inside @lofcz/deepfilternet-web module scope
+  }
+
+  if (!wasmBlobUrlPromise) {
+    wasmBlobUrlPromise = (async () => {
+      const response = await fetch('/df_bg.wasm.bin', { cache: 'force-cache' });
+      if (!response.ok) {
+        throw new Error(
+          `Failed to load DeepFilterNet3 model (HTTP ${response.status} ${response.statusText})`
+        );
+      }
+
+      const contentLength = Number(response.headers.get('Content-Length') || 0);
+      let compressedBytes;
+
+      if (response.body && typeof response.body.getReader === 'function') {
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loaded += value.byteLength;
+          if (contentLength > 0) {
+            const dlRatio = Math.min(1, loaded / contentLength);
+            onProgress?.({
+              percent: Math.round(4 + dlRatio * 10),
+              stage: `DeepFilterNet3: Downloading model (${(loaded / (1024 * 1024)).toFixed(1)} / ${(
+                contentLength /
+                (1024 * 1024)
+              ).toFixed(1)} MB)...`,
+            });
+          }
+        }
+
+        compressedBytes = new Uint8Array(loaded);
+        let offset = 0;
+        for (let i = 0; i < chunks.length; i++) {
+          compressedBytes.set(chunks[i], offset);
+          offset += chunks[i].byteLength;
+        }
+      } else {
+        compressedBytes = new Uint8Array(await response.arrayBuffer());
+      }
+
+      onProgress?.({
+        percent: 15,
+        stage: 'DeepFilterNet3: Decompressing & compiling WASM neural engine...',
+      });
+      await yieldToUI();
+
+      let wasmBytes = compressedBytes;
+      // Check for gzip magic header (0x1f 0x8b) and decompress natively
+      if (
+        compressedBytes.byteLength >= 2 &&
+        compressedBytes[0] === 0x1f &&
+        compressedBytes[1] === 0x8b
+      ) {
+        if (typeof DecompressionStream === 'undefined') {
+          throw new Error(
+            'Your browser does not support DecompressionStream needed to unpack DeepFilterNet3.'
+          );
+        }
+        const ds = new DecompressionStream('gzip');
+        const decompressedStream = new Blob([compressedBytes])
+          .stream()
+          .pipeThrough(ds);
+        wasmBytes = new Uint8Array(await new Response(decompressedStream).arrayBuffer());
+      }
+
+      const wasmBlob = new Blob([wasmBytes], { type: 'application/wasm' });
+      return URL.createObjectURL(wasmBlob);
+    })().catch((err) => {
+      wasmBlobUrlPromise = null;
+      throw err;
+    });
+  }
+
+  return await wasmBlobUrlPromise;
 }
 
 /**
@@ -75,17 +171,14 @@ export async function denoiseWithDeepFilterNet(
   const origSampleRate = inputBuffer.sampleRate;
   const numChannels = inputBuffer.numberOfChannels;
 
-  onProgress?.({
-    percent: 6,
-    stage: 'DeepFilterNet3: Loading WASM neural model (cached after first run)...',
-  });
-  await yieldToUI();
+  // Step 0: Load & decompress the cached WASM model once per browser session
+  const wasmUrl = await ensureDeepFilterWasmUrl(onProgress);
 
   // Step 1: Resample to DeepFilterNet3's native 48 kHz rate if needed
   let workingBuffer = inputBuffer;
   if (origSampleRate !== DF_SAMPLE_RATE) {
     onProgress?.({
-      percent: 14,
+      percent: 18,
       stage: `DeepFilterNet3: Resampling ${(origSampleRate / 1000).toFixed(1)} kHz → 48.0 kHz...`,
     });
     await yieldToUI();
@@ -98,9 +191,10 @@ export async function denoiseWithDeepFilterNet(
   // Step 2: Process each channel frame-by-frame through DeepFilterNet3 WASM
   for (let ch = 0; ch < numChannels; ch++) {
     const df = await DeepFilter.create({
-      wasmUrl: dfWasmUrl,
+      wasmUrl,
       attenuationLimit,
     });
+    wasmReady = true;
 
     try {
       df.setAttenuationLimit(attenuationLimit);
@@ -112,13 +206,12 @@ export async function denoiseWithDeepFilterNet(
       const frameBuf = new Float32Array(frameLen);
 
       const totalFrames = Math.ceil(length48k / frameLen);
-      const yieldEvery = 45; // Yield roughly every ~450 ms of audio so UI stays responsive
+      const yieldEvery = 45;
 
       for (let f = 0; f < totalFrames; f++) {
         const offset = f * frameLen;
         const copyLen = Math.min(frameLen, length48k - offset);
 
-        // Copy samples into fixed-length frame buffer, zero-padding the final tail frame
         frameBuf.fill(0);
         frameBuf.set(srcData.subarray(offset, offset + copyLen), 0);
 
@@ -127,7 +220,7 @@ export async function denoiseWithDeepFilterNet(
 
         if (f % yieldEvery === 0) {
           const chProgress = (ch + f / Math.max(1, totalFrames)) / numChannels;
-          const pct = Math.round(18 + chProgress * 66);
+          const pct = Math.round(20 + chProgress * 66);
           onProgress?.({
             percent: pct,
             stage: `DeepFilterNet3 neural denoising (ch ${ch + 1}/${numChannels}): ${Math.round(
@@ -161,7 +254,7 @@ export async function denoiseWithDeepFilterNet(
 
   if (origSampleRate !== DF_SAMPLE_RATE) {
     onProgress?.({
-      percent: 88,
+      percent: 90,
       stage: `DeepFilterNet3: Resampling back to ${(origSampleRate / 1000).toFixed(1)} kHz...`,
     });
     await yieldToUI();
