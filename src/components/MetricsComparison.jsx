@@ -35,15 +35,15 @@ export default function MetricsComparison({
     return (
       <section
         id="metrics"
-        className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-lg p-5"
+        className="bg-[var(--surface)] border border-[var(--border)] p-5"
       >
-        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+        <h2 className="text-sm font-bold tracking-tight text-[var(--text)]">
           Analysis Panel (Before vs After)
         </h2>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Upload an audio file or load the built-in demo clip to inspect duration, sample rate,
-          peak/RMS levels, ITU-R BS.1770 LUFS loudness, estimated noise floor, reverb, silence
-          percentage, and clipping samples.
+        <p className="text-xs text-[var(--text-muted)] mt-1">
+          Upload an audio file, record from your microphone, or load Demo Audio to inspect
+          duration, sample rate, peak/RMS levels, ITU-R BS.1770 LUFS loudness, estimated noise
+          floor, reverb, silence percentage, and clipping samples.
         </p>
       </section>
     );
@@ -207,71 +207,65 @@ export default function MetricsComparison({
     },
   ];
 
-  const toneClass = (tone) => {
-    if (tone === 'good') return 'text-emerald-700 dark:text-emerald-400';
-    if (tone === 'warn') return 'text-amber-700 dark:text-amber-400';
-    return 'text-rose-700 dark:text-rose-400';
+  const toneStyle = (tone) => {
+    if (tone === 'good') return { color: 'var(--status-good)' };
+    if (tone === 'warn') return { color: 'var(--status-warn)' };
+    return { color: 'var(--status-error)' };
   };
 
   return (
     <section
       id="metrics"
       aria-label="Before and after audio metrics"
-      className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden"
+      className="bg-[var(--surface)] border border-[var(--border)] overflow-hidden"
     >
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+      <div className="px-4 py-3 border-b border-[var(--border)] flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-bold tracking-tight text-[var(--text)]">
           Analysis Panel (Before vs After)
         </h2>
-        <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
-          Estimated input noise floor: {orig.estimatedNoiseFloorDb.toFixed(1)} dBFS
-          {proc ? ` → Output floor: ${proc.estimatedNoiseFloorDb.toFixed(1)} dBFS` : ''}
+        <span className="text-xs font-mono tabular-nums text-[var(--text-subtle)]">
+          Noise floor: {orig.estimatedNoiseFloorDb.toFixed(1)} dBFS
+          {proc ? ` → ${proc.estimatedNoiseFloorDb.toFixed(1)} dBFS` : ''}
         </span>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#0D1320] text-xs font-medium text-slate-500 dark:text-slate-400">
-              <th className="py-2.5 px-4">Metric</th>
-              <th className="py-2.5 px-4">Original (Before)</th>
-              <th className="py-2.5 px-4">Processed (After)</th>
-              <th className="py-2.5 px-4">Delta</th>
-              <th className="py-2.5 px-4 text-right">State</th>
+            <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[11px] font-mono uppercase tracking-wider text-[var(--text-subtle)]">
+              <th className="py-2.5 px-4 font-medium">Metric</th>
+              <th className="py-2.5 px-4 font-medium">Original (Before)</th>
+              <th className="py-2.5 px-4 font-medium">Processed (After)</th>
+              <th className="py-2.5 px-4 font-medium">Delta</th>
+              <th className="py-2.5 px-4 font-medium text-right">State</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800/80 text-xs">
+          <tbody className="divide-y divide-[var(--border)] text-xs">
             {rows.map((row) => (
               <tr
                 key={row.label}
-                className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors"
+                className="hover:bg-[var(--surface-hover)] transition-colors"
               >
                 <td className="py-2.5 px-4">
-                  <div className="font-medium text-slate-900 dark:text-slate-100">
-                    {row.label}
-                  </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {row.note}
-                  </div>
+                  <div className="font-medium text-[var(--text)]">{row.label}</div>
+                  <div className="text-[11px] text-[var(--text-subtle)]">{row.note}</div>
                 </td>
-                <td className="py-2.5 px-4 font-mono tabular-nums text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                <td className="py-2.5 px-4 font-mono tabular-nums text-[var(--text-muted)] whitespace-nowrap">
                   {row.before}
                 </td>
                 <td
                   className={`py-2.5 px-4 font-mono tabular-nums whitespace-nowrap ${
-                    proc
-                      ? 'text-slate-900 dark:text-slate-100 font-medium'
-                      : 'text-slate-400 dark:text-slate-500'
+                    proc ? 'text-[var(--text)] font-medium' : 'text-[var(--text-subtle)]'
                   }`}
                 >
                   {row.after}
                 </td>
-                <td className="py-2.5 px-4 font-mono tabular-nums text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                <td className="py-2.5 px-4 font-mono tabular-nums text-[var(--text-muted)] whitespace-nowrap">
                   {row.delta}
                 </td>
                 <td className="py-2.5 px-4 text-right font-mono whitespace-nowrap">
                   {row.status ? (
-                    <span className={`font-medium ${toneClass(row.status.tone)}`}>
+                    <span className="font-medium" style={toneStyle(row.status.tone)}>
                       {row.status.tone === 'good'
                         ? '✓ '
                         : row.status.tone === 'warn'
@@ -280,7 +274,7 @@ export default function MetricsComparison({
                       {row.status.text}
                     </span>
                   ) : (
-                    <span className="text-slate-400 dark:text-slate-600">—</span>
+                    <span className="text-[var(--text-subtle)]">—</span>
                   )}
                 </td>
               </tr>
@@ -291,18 +285,17 @@ export default function MetricsComparison({
 
       {/* Voice Clean Report & Warnings Footer */}
       {vc && (
-        <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#0D1320] space-y-2 text-xs">
+        <div className="px-4 py-3 border-t border-[var(--border)] bg-[var(--surface-2)] space-y-2 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-semibold text-slate-800 dark:text-slate-200">
-              Voice Clean Report
-            </span>
-            <span className="font-mono tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
+            <span className="font-semibold text-[var(--text)]">Voice Clean Report</span>
+            <span className="font-mono tabular-nums text-[11px] text-[var(--text-subtle)]">
               Denoiser: {vc.usedAiDenoise ? 'AI (DeepFilterNet3 WASM)' : 'Spectral STFT (2048-pt)'}{' '}
-              · Profile: {vc.noiseSource === 'selected-region' ? 'Selected region' : 'Auto quietest 10%'}
+              · Profile:{' '}
+              {vc.noiseSource === 'selected-region' ? 'Selected region' : 'Auto quietest 10%'}
             </span>
           </div>
           {vc.warnings && vc.warnings.length > 0 && (
-            <ul className="space-y-1 text-amber-800 dark:text-amber-300">
+            <ul className="space-y-1 text-[var(--status-warn)]">
               {vc.warnings.map((w, idx) => (
                 <li key={idx} className="leading-snug">
                   • {w}

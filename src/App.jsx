@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, Upload } from 'lucide-react';
+import { Download, Upload, Sparkles, SlidersHorizontal } from 'lucide-react';
 import { analyzeAudioBuffer } from './audio/analyzer.js';
 import {
   PRESETS,
@@ -25,6 +25,7 @@ import {
 import { useABPlayer } from './hooks/useABPlayer.js';
 import { useMicRecorder } from './hooks/useMicRecorder.js';
 import UploadBar from './components/UploadBar.jsx';
+import SimpleWorkspace from './components/SimpleWorkspace.jsx';
 import ProcessingRack from './components/ProcessingRack.jsx';
 import TransportDeck from './components/TransportDeck.jsx';
 import MetricsComparison from './components/MetricsComparison.jsx';
@@ -36,10 +37,19 @@ function getInitialTheme() {
   if (typeof document !== 'undefined') {
     return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
   }
-  return 'light';
+  return 'dark';
+}
+
+function getPageFromHash() {
+  if (typeof window === 'undefined') return 'simple';
+  const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+  if (hash === 'advanced') return 'advanced';
+  if (hash === 'how-it-works') return 'how-it-works';
+  return 'simple';
 }
 
 export default function App() {
+  const [activePage, setActivePage] = useState(getPageFromHash); // 'simple' | 'advanced' | 'how-it-works'
   const [theme, setTheme] = useState(getInitialTheme);
   const [fileInfo, setFileInfo] = useState(null);
   const [originalBuffer, setOriginalBuffer] = useState(null);
@@ -79,6 +89,24 @@ export default function App() {
 
   const fileInputRef = useRef(null);
   const abortControllerRef = useRef(null);
+
+  // Sync page view with URL hash so browser Back/Forward works cleanly across pages
+  const navigateToPage = useCallback((page) => {
+    setActivePage(page);
+    if (typeof window !== 'undefined') {
+      const targetHash = `#${page}`;
+      if (window.location.hash !== targetHash) {
+        window.history.pushState(null, '', targetHash);
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, []);
+
+  useEffect(() => {
+    const onHashChange = () => setActivePage(getPageFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   const {
     activeSource,
@@ -211,7 +239,6 @@ export default function App() {
             );
           }
 
-          // Automatically persist raw mic recording into Original Storage
           await persistOriginalBuffer(recordedBuffer, analysis, recordingName);
         } catch (err) {
           console.error('Recorded audio analysis error:', err);
@@ -244,30 +271,16 @@ export default function App() {
     startRecording();
   }, [pause, startRecording]);
 
-  // Sync light/dark mode with system prefers-color-scheme and manual toggle
+  // Sync light/dark mode classes & data-theme attribute
   useEffect(() => {
     const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
     if (theme === 'dark') {
       root.classList.add('dark');
     } else {
       root.classList.remove('dark');
     }
   }, [theme]);
-
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleSystemChange = (e) => {
-      try {
-        if (!localStorage.getItem('maml-theme')) {
-          setTheme(e.matches ? 'dark' : 'light');
-        }
-      } catch {
-        setTheme(e.matches ? 'dark' : 'light');
-      }
-    };
-    mq.addEventListener('change', handleSystemChange);
-    return () => mq.removeEventListener('change', handleSystemChange);
-  }, []);
 
   const handleToggleTheme = useCallback(() => {
     setTheme((prev) => {
@@ -288,7 +301,7 @@ export default function App() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') {
         return;
       }
-      if (!originalBuffer || isRecording) return;
+      if (!originalBuffer || isRecording || activePage === 'how-it-works') return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -301,7 +314,15 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [originalBuffer, processedBuffer, activeSource, isRecording, togglePlayTrack, switchSource]);
+  }, [
+    originalBuffer,
+    processedBuffer,
+    activeSource,
+    isRecording,
+    activePage,
+    togglePlayTrack,
+    switchSource,
+  ]);
 
   const handleFileSelected = useCallback(
     async (file, validationError) => {
@@ -318,7 +339,6 @@ export default function App() {
       try {
         const arrayBuffer = await file.arrayBuffer();
         const audioCtx = getAudioContext();
-        // Decode audio bytes into uncompressed 32-bit float PCM AudioBuffer
         const decoded = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
 
         if (!decoded || decoded.length === 0) {
@@ -398,8 +418,6 @@ export default function App() {
     if (preset.recommendedEngine) {
       setProcessingEngine(preset.recommendedEngine);
     }
-    // If the user explicitly picks a mastering preset with target LUFS normalization,
-    // allow that LUFS target to apply instead of forcing input loudness match.
     if (preset.options.normalizeEnabled) {
       setVoiceCleanOptions((prev) => ({ ...prev, keepOriginalLoudness: false }));
     }
@@ -408,7 +426,6 @@ export default function App() {
   const handleChangeOption = useCallback((key, value) => {
     setActivePresetId(null);
     setOptions((prev) => ({ ...prev, [key]: value }));
-    // Picking an explicit LUFS target overrides "Keep original loudness"
     if (key === 'targetLoudness' || key === 'normalizeMode') {
       setVoiceCleanOptions((prev) => ({ ...prev, keepOriginalLoudness: false }));
     }
@@ -423,6 +440,7 @@ export default function App() {
     if (!p) return;
     setVoiceCleanOptions((prev) => ({
       ...prev,
+      enabled: true,
       preset: p.id,
       noiseReduction: p.noiseReduction,
       reverbReduction: p.reverbReduction,
@@ -446,110 +464,60 @@ export default function App() {
     }
   }, []);
 
-  const handleProcess = useCallback(async () => {
-    if (!originalBuffer || isProcessing) return;
-    setErrorMessage(null);
-    setIsProcessing(true);
-    setIsSelectingNoise(false);
+  const handleProcess = useCallback(
+    async (isSimpleMode = false) => {
+      if (!originalBuffer || isProcessing) return;
+      setErrorMessage(null);
+      setIsProcessing(true);
+      setIsSelectingNoise(false);
 
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    const { signal } = controller;
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      const { signal } = controller;
 
-    const vcActive = Boolean(voiceCleanOptions.enabled);
-    const keepInputLufs = Boolean(vcActive && voiceCleanOptions.keepOriginalLoudness);
+      const vcActive = isSimpleMode ? true : Boolean(voiceCleanOptions.enabled);
+      const keepInputLufs = Boolean(vcActive && voiceCleanOptions.keepOriginalLoudness);
 
-    setProgress({
-      percent: 3,
-      stage: vcActive
-        ? 'Starting Voice Clean Web Worker...'
-        : processingEngine === 'deepfilternet'
-          ? 'Initializing DeepFilterNet3 neural engine...'
-          : 'Preparing PCM channel buffers...',
-    });
-    pause();
+      setProgress({
+        percent: 3,
+        stage: vcActive
+          ? 'Starting Voice Clean Web Worker...'
+          : processingEngine === 'deepfilternet'
+            ? 'Initializing DeepFilterNet3 neural engine...'
+            : 'Preparing PCM channel buffers...',
+      });
+      pause();
 
-    try {
-      let workingBuffer = originalBuffer;
-      let voiceCleanReport = null;
-      let report = {};
-      let storageTag = '';
+      try {
+        let workingBuffer = originalBuffer;
+        let voiceCleanReport = null;
+        let report = {};
+        let storageTag = '';
 
-      // STEP 0: Stage 1 (and optional Stage 2 AI denoise) Voice Clean in a Web Worker
-      // Runs BEFORE existing compressor / leveler / loudness mastering stages.
-      if (vcActive) {
-        const vcRes = await runVoiceCleanInWorker(
-          originalBuffer,
-          {
-            ...voiceCleanOptions,
-            noiseSampleRegion: noiseRegion,
-          },
-          {
-            signal,
-            onProgress: (prog) => {
-              const scale = processingEngine === 'deepfilternet' ? 0.55 : 0.68;
-              setProgress({
-                percent: Math.max(4, Math.round(prog.percent * scale)),
-                stage: prog.stage,
-              });
+        // STEP 0: Stage 1 (and optional Stage 2 AI denoise) Voice Clean in Web Worker
+        if (vcActive) {
+          const vcRes = await runVoiceCleanInWorker(
+            originalBuffer,
+            {
+              ...voiceCleanOptions,
+              enabled: true,
+              noiseSampleRegion: noiseRegion,
             },
-          }
-        );
-
-        if (signal.aborted) {
-          const err = new Error('Processing cancelled.');
-          err.name = 'AbortError';
-          throw err;
-        }
-
-        workingBuffer = vcRes.audioBuffer;
-        voiceCleanReport = vcRes.report;
-      }
-
-      // Determine effective mastering options when chained after Voice Clean:
-      // - Avoid double-running Stage b. noise reduction since Voice Clean already denoised.
-      // - When "Keep original loudness" is ON, lock Stage e. target to input LUFS & -1.5 dBTP
-      //   so output stays within ±0.5 LU of original and is never louder than the original.
-      const effectiveOptions = vcActive
-        ? {
-            ...options,
-            noiseGateEnabled: false,
-            highPassEnabled: options.highPassEnabled && options.highPassFreq > 85,
-            ...(keepInputLufs && originalAnalysis?.integratedLufs > -65
-              ? {
-                  normalizeEnabled: true,
-                  normalizeMode: 'lufs',
-                  targetLoudness: originalAnalysis.integratedLufs,
-                  limiterCeilingDbtp: Math.min(options.limiterCeilingDbtp, -1.5),
-                }
-              : {}),
-          }
-        : options;
-
-      const hasPostStages =
-        effectiveOptions.highPassEnabled ||
-        effectiveOptions.noiseGateEnabled ||
-        effectiveOptions.voiceClarityEnabled ||
-        effectiveOptions.smoothToneEnabled ||
-        effectiveOptions.compressorEnabled ||
-        effectiveOptions.levelerEnabled ||
-        (effectiveOptions.normalizeEnabled && !keepInputLufs) ||
-        effectiveOptions.silenceTrimEnabled;
-
-      let outBuffer = workingBuffer;
-
-      if (processingEngine === 'deepfilternet' && !(vcActive && voiceCleanOptions.useAiDenoise)) {
-        try {
-          const dfRes = await denoiseWithDeepFilterNet(
-            workingBuffer,
-            dfOptions,
-            (prog) => {
-              const basePct = vcActive ? 55 : 0;
-              const span = dfOptions.chainMastering ? (vcActive ? 25 : 65) : (vcActive ? 41 : 96);
-              setProgress({
-                percent: Math.min(96, Math.round(basePct + (prog.percent / 100) * span)),
-                stage: prog.stage,
-              });
+            {
+              signal,
+              onProgress: (prog) => {
+                const scale = isSimpleMode
+                  ? options.smoothToneEnabled
+                    ? 0.82
+                    : 0.96
+                  : processingEngine === 'deepfilternet'
+                    ? 0.55
+                    : 0.68;
+                setProgress({
+                  percent: Math.max(4, Math.round(prog.percent * scale)),
+                  stage: prog.stage,
+                });
+              },
             }
           );
 
@@ -559,133 +527,225 @@ export default function App() {
             throw err;
           }
 
-          if (dfOptions.chainMastering) {
-            const postRes = await processAudioBuffer(
-              dfRes.audioBuffer,
-              { ...effectiveOptions, noiseGateEnabled: false, postNeuralCleanup: true },
+          workingBuffer = vcRes.audioBuffer;
+          voiceCleanReport = vcRes.report;
+        }
+
+        let outBuffer = workingBuffer;
+
+        if (isSimpleMode) {
+          // Simple mode: clean Voice Clean + optional Smooth Tone + loudness match / -1.5 dBTP protection
+          if (options.smoothToneEnabled) {
+            const simplePost = await processAudioBuffer(
+              workingBuffer,
+              {
+                ...options,
+                highPassEnabled: false,
+                noiseGateEnabled: false,
+                voiceClarityEnabled: false,
+                smoothToneEnabled: true,
+                compressorEnabled: false,
+                levelerEnabled: false,
+                silenceTrimEnabled: false,
+                normalizeEnabled: true,
+                normalizeMode: 'lufs',
+                targetLoudness:
+                  keepInputLufs && originalAnalysis?.integratedLufs > -65
+                    ? originalAnalysis.integratedLufs
+                    : options.targetLoudness,
+                limiterCeilingDbtp: -1.5,
+              },
               (prog) => {
-                const basePct = vcActive ? 80 : 65;
-                const span = vcActive ? 18 : 33;
                 setProgress({
-                  percent: Math.round(basePct + (prog.percent / 100) * span),
+                  percent: Math.round(82 + prog.percent * 0.16),
                   stage: prog.stage,
                 });
               }
             );
-            outBuffer = postRes.audioBuffer;
-            report = { ...postRes.report, deepFilterElapsedMs: dfRes.elapsedMs };
-            const presetPart =
-              activePresetId && PRESETS[activePresetId]
+            outBuffer = simplePost.audioBuffer;
+            report = simplePost.report;
+          }
+          storageTag = `Simple · Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset})`;
+        } else {
+          // Advanced mode: full configurable mastering rack after Voice Clean
+          const effectiveOptions = vcActive
+            ? {
+                ...options,
+                noiseGateEnabled: false,
+                highPassEnabled: options.highPassEnabled && options.highPassFreq > 85,
+                ...(keepInputLufs && originalAnalysis?.integratedLufs > -65
+                  ? {
+                      normalizeEnabled: true,
+                      normalizeMode: 'lufs',
+                      targetLoudness: originalAnalysis.integratedLufs,
+                      limiterCeilingDbtp: Math.min(options.limiterCeilingDbtp, -1.5),
+                    }
+                  : {}),
+              }
+            : options;
+
+          const hasPostStages =
+            effectiveOptions.highPassEnabled ||
+            effectiveOptions.noiseGateEnabled ||
+            effectiveOptions.voiceClarityEnabled ||
+            effectiveOptions.smoothToneEnabled ||
+            effectiveOptions.compressorEnabled ||
+            effectiveOptions.levelerEnabled ||
+            (effectiveOptions.normalizeEnabled && !keepInputLufs) ||
+            effectiveOptions.silenceTrimEnabled;
+
+          if (processingEngine === 'deepfilternet' && !(vcActive && voiceCleanOptions.useAiDenoise)) {
+            try {
+              const dfRes = await denoiseWithDeepFilterNet(workingBuffer, dfOptions, (prog) => {
+                const basePct = vcActive ? 55 : 0;
+                const span = dfOptions.chainMastering
+                  ? vcActive
+                    ? 25
+                    : 65
+                  : vcActive
+                    ? 41
+                    : 96;
+                setProgress({
+                  percent: Math.min(96, Math.round(basePct + (prog.percent / 100) * span)),
+                  stage: prog.stage,
+                });
+              });
+
+              if (signal.aborted) {
+                const err = new Error('Processing cancelled.');
+                err.name = 'AbortError';
+                throw err;
+              }
+
+              if (dfOptions.chainMastering) {
+                const postRes = await processAudioBuffer(
+                  dfRes.audioBuffer,
+                  { ...effectiveOptions, noiseGateEnabled: false, postNeuralCleanup: true },
+                  (prog) => {
+                    const basePct = vcActive ? 80 : 65;
+                    const span = vcActive ? 18 : 33;
+                    setProgress({
+                      percent: Math.round(basePct + (prog.percent / 100) * span),
+                      stage: prog.stage,
+                    });
+                  }
+                );
+                outBuffer = postRes.audioBuffer;
+                report = { ...postRes.report, deepFilterElapsedMs: dfRes.elapsedMs };
+                const presetPart =
+                  activePresetId && PRESETS[activePresetId]
+                    ? PRESETS[activePresetId].label
+                    : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
+                storageTag = vcActive
+                  ? `Voice Clean + DeepFilterNet3 + ${presetPart}`
+                  : `DeepFilterNet3 + ${presetPart}`;
+              } else {
+                outBuffer = dfRes.audioBuffer;
+                report = { deepFilterElapsedMs: dfRes.elapsedMs };
+                storageTag = vcActive
+                  ? `Voice Clean + DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`
+                  : `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`;
+              }
+            } catch (dfErr) {
+              if (dfErr?.name === 'AbortError') throw dfErr;
+              console.warn('DeepFilterNet3 failed, falling back to Studio Spectral Wiener:', dfErr);
+              setErrorMessage(
+                `DeepFilterNet3 WASM could not run here (${dfErr?.message || 'WASM error'}) — automatically completed using Studio Spectral Wiener Denoiser + Mastering instead.`
+              );
+              const fallbackRes = await processAudioBuffer(
+                workingBuffer,
+                {
+                  ...effectiveOptions,
+                  noiseGateEnabled: !vcActive,
+                  noiseMode: 'spectral',
+                  noiseGateReductionDb: Math.max(
+                    18,
+                    Math.min(30, Math.round(dfOptions.attenuationLimit * 0.3))
+                  ),
+                },
+                (prog) => setProgress(prog)
+              );
+              outBuffer = fallbackRes.audioBuffer;
+              report = fallbackRes.report;
+              storageTag = vcActive ? 'Voice Clean + Spectral Fallback' : 'Spectral Wiener Fallback';
+            }
+          } else if (!vcActive || hasPostStages) {
+            const res = await processAudioBuffer(workingBuffer, effectiveOptions, (prog) => {
+              const pct = vcActive ? Math.round(68 + prog.percent * 0.3) : prog.percent;
+              setProgress({ percent: pct, stage: prog.stage });
+            });
+            outBuffer = res.audioBuffer;
+            report = res.report;
+            const presetPart = keepInputLufs
+              ? 'Matched LUFS'
+              : activePresetId && PRESETS[activePresetId]
                 ? PRESETS[activePresetId].label
                 : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
             storageTag = vcActive
-              ? `Voice Clean + DeepFilterNet3 + ${presetPart}`
-              : `DeepFilterNet3 + ${presetPart}`;
+              ? `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset}) · ${presetPart}`
+              : `Current DSP · ${presetPart}`;
           } else {
-            outBuffer = dfRes.audioBuffer;
-            report = { deepFilterElapsedMs: dfRes.elapsedMs };
-            storageTag = vcActive
-              ? `Voice Clean + DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`
-              : `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`;
+            outBuffer = workingBuffer;
+            storageTag = `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset})`;
           }
-        } catch (dfErr) {
-          if (dfErr?.name === 'AbortError') throw dfErr;
-          console.warn('DeepFilterNet3 failed, falling back to Studio Spectral Wiener:', dfErr);
-          setErrorMessage(
-            `DeepFilterNet3 WASM could not run here (${dfErr?.message || 'WASM error'}) — automatically completed using Studio Spectral Wiener Denoiser + Mastering instead.`
-          );
-          const fallbackRes = await processAudioBuffer(
-            workingBuffer,
-            {
-              ...effectiveOptions,
-              noiseGateEnabled: !vcActive,
-              noiseMode: 'spectral',
-              noiseGateReductionDb: Math.max(
-                18,
-                Math.min(30, Math.round(dfOptions.attenuationLimit * 0.3))
-              ),
-            },
-            (prog) => setProgress(prog)
-          );
-          outBuffer = fallbackRes.audioBuffer;
-          report = fallbackRes.report;
-          storageTag = vcActive ? 'Voice Clean + Spectral Fallback' : 'Spectral Wiener Fallback';
         }
-      } else if (!vcActive || hasPostStages) {
-        const res = await processAudioBuffer(workingBuffer, effectiveOptions, (prog) => {
-          const pct = vcActive ? Math.round(68 + prog.percent * 0.3) : prog.percent;
-          setProgress({ percent: pct, stage: prog.stage });
-        });
-        outBuffer = res.audioBuffer;
-        report = res.report;
-        const presetPart = keepInputLufs
-          ? 'Matched LUFS'
-          : activePresetId && PRESETS[activePresetId]
-            ? PRESETS[activePresetId].label
-            : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
-        storageTag = vcActive
-          ? `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset}) · ${presetPart}`
-          : `Current DSP · ${presetPart}`;
-      } else {
-        // Pure Voice Clean (no additional mastering stages active)
-        outBuffer = workingBuffer;
-        storageTag = `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset})`;
-      }
 
-      if (signal.aborted) {
-        const err = new Error('Processing cancelled.');
-        err.name = 'AbortError';
-        throw err;
-      }
+        if (signal.aborted) {
+          const err = new Error('Processing cancelled.');
+          err.name = 'AbortError';
+          throw err;
+        }
 
-      if (voiceCleanReport) {
-        report = { ...report, voiceClean: voiceCleanReport };
-      }
+        if (voiceCleanReport) {
+          report = { ...report, voiceClean: voiceCleanReport };
+        }
 
-      const afterAnalysis = analyzeAudioBuffer(outBuffer);
+        const afterAnalysis = analyzeAudioBuffer(outBuffer);
 
-      setProcessedBuffer(outBuffer);
-      setProcessedAnalysis(afterAnalysis);
-      setProcessingReport(report);
-      setProgress({ percent: 100, stage: 'Complete' });
+        setProcessedBuffer(outBuffer);
+        setProcessedAnalysis(afterAnalysis);
+        setProcessingReport(report);
+        setProgress({ percent: 100, stage: 'Complete' });
 
-      // Auto-save processed output into separate Processed Storage (guard >45MB WAVs)
-      const estWavBytes = outBuffer.length * outBuffer.numberOfChannels * 2 + 44;
-      if (estWavBytes <= 45 * 1024 * 1024) {
-        await persistProcessedBuffer(outBuffer, afterAnalysis, fileInfo?.name, storageTag);
-      } else {
-        setActiveProcessedId(null);
+        // Auto-save processed output into separate Processed Storage (guard >45MB WAVs)
+        const estWavBytes = outBuffer.length * outBuffer.numberOfChannels * 2 + 44;
+        if (estWavBytes <= 45 * 1024 * 1024) {
+          await persistProcessedBuffer(outBuffer, afterAnalysis, fileInfo?.name, storageTag);
+        } else {
+          setActiveProcessedId(null);
+        }
+      } catch (err) {
+        if (err?.name === 'AbortError') {
+          setProgress({ percent: 0, stage: '' });
+          setErrorMessage('Processing cancelled. Your original audio buffer was not modified.');
+        } else {
+          console.error('Processing error:', err);
+          setErrorMessage(
+            processingEngine === 'deepfilternet'
+              ? `DeepFilterNet3 processing failed (${err?.message || 'WASM error'}). Ensure WebAssembly SIMD is supported in your browser, or switch to Current DSP.`
+              : `Audio processing failed (${err?.message || 'unexpected error'}). Try a shorter clip or fewer simultaneous stages.`
+          );
+        }
+      } finally {
+        abortControllerRef.current = null;
+        setIsProcessing(false);
       }
-    } catch (err) {
-      if (err?.name === 'AbortError') {
-        setProgress({ percent: 0, stage: '' });
-        setErrorMessage('Processing cancelled. Your original audio buffer was not modified.');
-      } else {
-        console.error('Processing error:', err);
-        setErrorMessage(
-          processingEngine === 'deepfilternet'
-            ? `DeepFilterNet3 processing failed (${err?.message || 'WASM error'}). Ensure WebAssembly SIMD is supported in your browser, or switch to Current DSP.`
-            : `Audio processing failed (${err?.message || 'unexpected error'}). Try a shorter clip or fewer simultaneous stages.`
-        );
-      }
-    } finally {
-      abortControllerRef.current = null;
-      setIsProcessing(false);
-    }
-  }, [
-    originalBuffer,
-    originalAnalysis,
-    isProcessing,
-    processingEngine,
-    dfOptions,
-    voiceCleanOptions,
-    noiseRegion,
-    options,
-    pause,
-    activePresetId,
-    fileInfo,
-    persistProcessedBuffer,
-  ]);
+    },
+    [
+      originalBuffer,
+      originalAnalysis,
+      isProcessing,
+      processingEngine,
+      dfOptions,
+      voiceCleanOptions,
+      noiseRegion,
+      options,
+      pause,
+      activePresetId,
+      fileInfo,
+      persistProcessedBuffer,
+    ]
+  );
 
   const handleDownloadOriginalWav = useCallback(() => {
     if (!originalBuffer) return;
@@ -762,6 +822,8 @@ export default function App() {
         setOriginalBuffer(decoded);
         setOriginalAnalysis(analysis);
         setActiveOriginalId(clip.id);
+        setNoiseRegion(null);
+        setIsSelectingNoise(false);
       } catch (err) {
         console.error('Failed to load stored original clip:', err);
         setErrorMessage(`Could not load "${clip.name}" from Original Storage.`);
@@ -832,60 +894,79 @@ export default function App() {
     await refreshStorageLists();
   }, [refreshStorageLists]);
 
-  return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#090D16] text-slate-900 dark:text-slate-100">
-      {/* Top Bar Contract: strictly 3 zones separated by gap-8 */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-[#090D16]/95 backdrop-blur-xs">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-8">
-          <a
-            href="#workspace"
-            className="text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0"
-          >
-            Mini Audio Mastering Lab
-          </a>
+  const handleHeaderLoadAudio = () => {
+    if (activePage === 'how-it-works') {
+      navigateToPage('simple');
+      setTimeout(() => fileInputRef.current?.click(), 50);
+    } else {
+      fileInputRef.current?.click();
+    }
+  };
 
+  return (
+    <div className="min-h-screen flex flex-col bg-[var(--bg)] text-[var(--text)]">
+      {/* Top Navbar: Exact Quotly / Lobaverse 3-zone obsidian + gold architecture */}
+      <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--bg)]/95 backdrop-blur-xs">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-6 sm:gap-8">
+          {/* Zone 1: Wide-tracked Quotly / Lobaverse Wordmark */}
+          <button
+            type="button"
+            onClick={() => navigateToPage('simple')}
+            className="text-xs sm:text-sm font-extrabold tracking-[0.2em] uppercase text-[var(--text)] hover:text-[var(--accent)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            LOBA VERSE <span className="text-[var(--accent)] mx-1">·</span> AUDIO LAB
+          </button>
+
+          {/* Zone 2: Clean single-line navigation links (Normal / Simple, Advanced, How It Works) */}
           <nav
             aria-label="Primary navigation"
-            className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600 dark:text-slate-400"
+            className="flex items-center gap-4 sm:gap-7 h-full text-[11px] sm:text-xs font-semibold tracking-[0.14em] uppercase"
           >
-            <a
-              href="#workspace"
-              className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
+            <button
+              type="button"
+              onClick={() => navigateToPage('simple')}
+              aria-current={activePage === 'simple' ? 'page' : undefined}
+              className={`h-full inline-flex items-center border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activePage === 'simple'
+                  ? 'border-[var(--accent)] text-[var(--text)]'
+                  : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text)]'
+              }`}
             >
-              Workspace
-            </a>
-            <a
-              href="#metrics"
-              className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
+              Normal
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToPage('advanced')}
+              aria-current={activePage === 'advanced' ? 'page' : undefined}
+              className={`h-full inline-flex items-center border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activePage === 'advanced'
+                  ? 'border-[var(--accent)] text-[var(--text)]'
+                  : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text)]'
+              }`}
             >
-              Metrics
-            </a>
-            <a
-              href="#visualizers"
-              className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
-            >
-              Visualizers
-            </a>
-            <a
-              href="#storage"
-              className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
-            >
-              Storage
-            </a>
-            <a
-              href="#how-it-works"
-              className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
+              Advanced
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToPage('how-it-works')}
+              aria-current={activePage === 'how-it-works' ? 'page' : undefined}
+              className={`h-full inline-flex items-center border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activePage === 'how-it-works'
+                  ? 'border-[var(--accent)] text-[var(--text)]'
+                  : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text)]'
+              }`}
             >
               How It Works
-            </a>
+            </button>
           </nav>
 
+          {/* Zone 3: Single Primary Action */}
           <div className="flex items-center shrink-0">
             {processedBuffer ? (
               <button
                 type="button"
                 onClick={handleDownloadWav}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-md bg-sky-600 hover:bg-sky-700 dark:bg-cyan-500 dark:hover:bg-cyan-400 text-white dark:text-slate-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-[11px] font-bold tracking-[0.12em] uppercase bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-ink)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
                 Export WAV
@@ -893,8 +974,8 @@ export default function App() {
             ) : (
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-md bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-950 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                onClick={handleHeaderLoadAudio}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-[11px] font-bold tracking-[0.12em] uppercase bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-ink)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Upload className="w-3.5 h-3.5" />
                 Load Audio
@@ -904,124 +985,268 @@ export default function App() {
         </div>
       </header>
 
-      {/* Audio Source Dropzone + Live Mic Recorder + Theme Toggle */}
-      <UploadBar
-        fileInfo={fileInfo}
-        originalAnalysis={originalAnalysis}
-        isDecoding={isDecoding}
-        isRecording={isRecording}
-        recordingElapsedSec={recordingElapsedSec}
-        inputLevelDb={inputLevelDb}
-        errorMessage={errorMessage}
-        onClearError={() => setErrorMessage(null)}
-        onFileSelected={handleFileSelected}
-        onLoadDemo={handleLoadDemo}
-        onStartRecording={handleStartRecording}
-        onStopRecording={stopRecording}
-        onDownloadOriginalWav={handleDownloadOriginalWav}
-        theme={theme}
-        onToggleTheme={handleToggleTheme}
-        fileInputRef={fileInputRef}
-      />
-
-      {/* Asymmetric Split Console Workspace */}
-      <main id="workspace" className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-6 items-start">
-          {/* Left Parameter & Processing Column */}
-          <ProcessingRack
-            processingEngine={processingEngine}
-            onChangeEngine={setProcessingEngine}
-            dfOptions={dfOptions}
-            onChangeDfOption={handleChangeDfOption}
-            voiceCleanOptions={voiceCleanOptions}
-            onChangeVoiceCleanOption={handleChangeVoiceCleanOption}
-            onApplyVoiceCleanPreset={handleApplyVoiceCleanPreset}
-            noiseRegion={noiseRegion}
-            isSelectingNoise={isSelectingNoise}
-            onToggleSelectingNoise={setIsSelectingNoise}
-            onClearNoiseRegion={() => setNoiseRegion(null)}
-            options={options}
-            activePresetId={activePresetId}
-            onApplyPreset={handleApplyPreset}
-            onChangeOption={handleChangeOption}
-            onProcess={handleProcess}
-            onCancelProcess={handleCancelProcess}
-            isProcessing={isProcessing}
-            progress={progress}
-            hasAudio={Boolean(originalBuffer)}
-            processingReport={processingReport}
+      {/* Dedicated Separate Page: How It Works */}
+      {activePage === 'how-it-works' ? (
+        <HowItWorks
+          onOpenSimple={() => navigateToPage('simple')}
+          onOpenAdvanced={() => navigateToPage('advanced')}
+        />
+      ) : (
+        <>
+          {/* Audio Source Dropzone + Live Mic Recorder + Theme Switch */}
+          <UploadBar
+            fileInfo={fileInfo}
+            originalAnalysis={originalAnalysis}
+            isDecoding={isDecoding}
+            isRecording={isRecording}
+            recordingElapsedSec={recordingElapsedSec}
+            inputLevelDb={inputLevelDb}
+            errorMessage={errorMessage}
+            onClearError={() => setErrorMessage(null)}
+            onFileSelected={handleFileSelected}
+            onLoadDemo={handleLoadDemo}
+            onStartRecording={handleStartRecording}
+            onStopRecording={stopRecording}
+            onDownloadOriginalWav={handleDownloadOriginalWav}
+            theme={theme}
+            onToggleTheme={handleToggleTheme}
+            fileInputRef={fileInputRef}
           />
 
-          {/* Right Analysis, A/B Transport, Visualization & Comparison Storage Stage */}
-          <div className="space-y-6 min-w-0">
-            <TransportDeck
-              originalDuration={originalBuffer?.duration || 0}
-              processedDuration={processedBuffer?.duration || 0}
-              activeSource={activeSource}
-              isPlaying={isPlaying}
-              currentTime={currentTime}
-              hasOriginal={Boolean(originalBuffer)}
-              hasProcessed={Boolean(processedBuffer)}
-              abMatchLoudness={abMatchLoudness}
-              onToggleAbMatchLoudness={setAbMatchLoudness}
-              originalLufs={originalAnalysis?.integratedLufs}
-              processedLufs={processedAnalysis?.integratedLufs}
-              onTogglePlayTrack={togglePlayTrack}
-              onSeek={seek}
-              onDownloadOriginalWav={handleDownloadOriginalWav}
-              onDownloadWav={handleDownloadWav}
-            />
+          {/* Main Landing Mode Selector + Workspace */}
+          <main
+            id="workspace"
+            className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6"
+          >
+            {/* Simple vs Advanced Landing Options Bar */}
+            <section
+              aria-label="Choose Simple or Advanced mastering mode"
+              className="grid grid-cols-1 md:grid-cols-2 border border-[var(--border)] bg-[var(--surface)] divide-y md:divide-y-0 md:divide-x divide-[var(--border)]"
+            >
+              <button
+                type="button"
+                onClick={() => navigateToPage('simple')}
+                className={`text-left px-5 py-4 transition-colors cursor-pointer flex items-start justify-between gap-4 ${
+                  activePage === 'simple'
+                    ? 'bg-[var(--accent-muted)]'
+                    : 'hover:bg-[var(--surface-hover)]'
+                }`}
+              >
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Sparkles
+                      className={`w-4 h-4 shrink-0 ${
+                        activePage === 'simple' ? 'text-[var(--accent)]' : 'text-[var(--text-subtle)]'
+                      }`}
+                    />
+                    <span className="text-sm font-bold tracking-tight text-[var(--text)]">
+                      Simple (Normal)
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+                    Fast one-click Voice Clean with Natural / Clear / Strong profiles, matched-loudness
+                    A/B auditioning, and instant WAV download.
+                  </p>
+                </div>
+                <span
+                  className={`font-mono text-[11px] tracking-wider uppercase shrink-0 mt-0.5 ${
+                    activePage === 'simple' ? 'text-[var(--accent)] font-semibold' : 'text-[var(--text-subtle)]'
+                  }`}
+                >
+                  {activePage === 'simple' ? 'Active' : 'Select'}
+                </span>
+              </button>
 
-            <Visualizations
-              originalAnalysis={originalAnalysis}
-              processedAnalysis={processedAnalysis}
-              activeSource={activeSource}
-              currentTime={currentTime}
-              options={options}
-              theme={theme}
-              onSeek={seek}
-              noiseRegion={noiseRegion}
-              isSelectingNoise={isSelectingNoise}
-              onSelectNoiseRegion={setNoiseRegion}
-              onToggleSelectingNoise={setIsSelectingNoise}
-            />
+              <button
+                type="button"
+                onClick={() => navigateToPage('advanced')}
+                className={`text-left px-5 py-4 transition-colors cursor-pointer flex items-start justify-between gap-4 ${
+                  activePage === 'advanced'
+                    ? 'bg-[var(--accent-muted)]'
+                    : 'hover:bg-[var(--surface-hover)]'
+                }`}
+              >
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal
+                      className={`w-4 h-4 shrink-0 ${
+                        activePage === 'advanced' ? 'text-[var(--accent)]' : 'text-[var(--text-subtle)]'
+                      }`}
+                    />
+                    <span className="text-sm font-bold tracking-tight text-[var(--text)]">
+                      Advanced Lab
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+                    Full DSP rack: Voice Clean sliders, DeepFilterNet3 controls, compressor, auto-leveler,
+                    LUFS targets, FFT spectrograms &amp; IndexedDB clip storage.
+                  </p>
+                </div>
+                <span
+                  className={`font-mono text-[11px] tracking-wider uppercase shrink-0 mt-0.5 ${
+                    activePage === 'advanced' ? 'text-[var(--accent)] font-semibold' : 'text-[var(--text-subtle)]'
+                  }`}
+                >
+                  {activePage === 'advanced' ? 'Active' : 'Select'}
+                </span>
+              </button>
+            </section>
 
-            <MetricsComparison
-              originalAnalysis={originalAnalysis}
-              processedAnalysis={processedAnalysis}
-              options={options}
-              processingReport={processingReport}
-              voiceCleanOptions={voiceCleanOptions}
-            />
+            {activePage === 'simple' ? (
+              <SimpleWorkspace
+                voiceCleanOptions={voiceCleanOptions}
+                onChangeVoiceCleanOption={handleChangeVoiceCleanOption}
+                onApplyVoiceCleanPreset={handleApplyVoiceCleanPreset}
+                options={options}
+                onChangeOption={handleChangeOption}
+                onProcess={() => handleProcess(true)}
+                onCancelProcess={handleCancelProcess}
+                isProcessing={isProcessing}
+                progress={progress}
+                hasAudio={Boolean(originalBuffer)}
+                originalBuffer={originalBuffer}
+                processedBuffer={processedBuffer}
+                originalAnalysis={originalAnalysis}
+                processedAnalysis={processedAnalysis}
+                processingReport={processingReport}
+                activeSource={activeSource}
+                isPlaying={isPlaying}
+                currentTime={currentTime}
+                abMatchLoudness={abMatchLoudness}
+                onToggleAbMatchLoudness={setAbMatchLoudness}
+                onTogglePlayTrack={togglePlayTrack}
+                onSeek={seek}
+                onDownloadOriginalWav={handleDownloadOriginalWav}
+                onDownloadWav={handleDownloadWav}
+                theme={theme}
+                noiseRegion={noiseRegion}
+                isSelectingNoise={isSelectingNoise}
+                onSelectNoiseRegion={setNoiseRegion}
+                onToggleSelectingNoise={setIsSelectingNoise}
+                onOpenAdvanced={() => navigateToPage('advanced')}
+              />
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-6 items-start">
+                {/* Left Parameter & Processing Column */}
+                <ProcessingRack
+                  processingEngine={processingEngine}
+                  onChangeEngine={setProcessingEngine}
+                  dfOptions={dfOptions}
+                  onChangeDfOption={handleChangeDfOption}
+                  voiceCleanOptions={voiceCleanOptions}
+                  onChangeVoiceCleanOption={handleChangeVoiceCleanOption}
+                  onApplyVoiceCleanPreset={handleApplyVoiceCleanPreset}
+                  noiseRegion={noiseRegion}
+                  isSelectingNoise={isSelectingNoise}
+                  onToggleSelectingNoise={setIsSelectingNoise}
+                  onClearNoiseRegion={() => setNoiseRegion(null)}
+                  options={options}
+                  activePresetId={activePresetId}
+                  onApplyPreset={handleApplyPreset}
+                  onChangeOption={handleChangeOption}
+                  onProcess={() => handleProcess(false)}
+                  onCancelProcess={handleCancelProcess}
+                  isProcessing={isProcessing}
+                  progress={progress}
+                  hasAudio={Boolean(originalBuffer)}
+                  processingReport={processingReport}
+                />
 
-            <StorageLibrary
-              originalClips={originalClips}
-              processedClips={processedClips}
-              activeOriginalId={activeOriginalId}
-              activeProcessedId={activeProcessedId}
-              hasOriginal={Boolean(originalBuffer)}
-              hasProcessed={Boolean(processedBuffer)}
-              onSaveCurrentOriginal={handleSaveCurrentOriginal}
-              onSaveCurrentProcessed={handleSaveCurrentProcessed}
-              onLoadOriginalClip={handleLoadOriginalClip}
-              onLoadProcessedClip={handleLoadProcessedClip}
-              onDownloadClip={handleDownloadStoredClip}
-              onDeleteOriginalClip={handleDeleteOriginalClip}
-              onDeleteProcessedClip={handleDeleteProcessedClip}
-              onClearOriginals={handleClearOriginals}
-              onClearProcessed={handleClearProcessed}
-            />
+                {/* Right Analysis, A/B Transport, Visualization & Comparison Storage Stage */}
+                <div className="space-y-6 min-w-0">
+                  <TransportDeck
+                    originalDuration={originalBuffer?.duration || 0}
+                    processedDuration={processedBuffer?.duration || 0}
+                    activeSource={activeSource}
+                    isPlaying={isPlaying}
+                    currentTime={currentTime}
+                    hasOriginal={Boolean(originalBuffer)}
+                    hasProcessed={Boolean(processedBuffer)}
+                    abMatchLoudness={abMatchLoudness}
+                    onToggleAbMatchLoudness={setAbMatchLoudness}
+                    originalLufs={originalAnalysis?.integratedLufs}
+                    processedLufs={processedAnalysis?.integratedLufs}
+                    onTogglePlayTrack={togglePlayTrack}
+                    onSeek={seek}
+                    onDownloadOriginalWav={handleDownloadOriginalWav}
+                    onDownloadWav={handleDownloadWav}
+                  />
+
+                  <Visualizations
+                    originalAnalysis={originalAnalysis}
+                    processedAnalysis={processedAnalysis}
+                    activeSource={activeSource}
+                    currentTime={currentTime}
+                    options={options}
+                    voiceCleanOptions={voiceCleanOptions}
+                    theme={theme}
+                    onSeek={seek}
+                    noiseRegion={noiseRegion}
+                    isSelectingNoise={isSelectingNoise}
+                    onSelectNoiseRegion={setNoiseRegion}
+                    onToggleSelectingNoise={setIsSelectingNoise}
+                  />
+
+                  <MetricsComparison
+                    originalAnalysis={originalAnalysis}
+                    processedAnalysis={processedAnalysis}
+                    options={options}
+                    processingReport={processingReport}
+                    voiceCleanOptions={voiceCleanOptions}
+                  />
+
+                  <StorageLibrary
+                    originalClips={originalClips}
+                    processedClips={processedClips}
+                    activeOriginalId={activeOriginalId}
+                    activeProcessedId={activeProcessedId}
+                    hasOriginal={Boolean(originalBuffer)}
+                    hasProcessed={Boolean(processedBuffer)}
+                    onSaveCurrentOriginal={handleSaveCurrentOriginal}
+                    onSaveCurrentProcessed={handleSaveCurrentProcessed}
+                    onLoadOriginalClip={handleLoadOriginalClip}
+                    onLoadProcessedClip={handleLoadProcessedClip}
+                    onDownloadClip={handleDownloadStoredClip}
+                    onDeleteOriginalClip={handleDeleteOriginalClip}
+                    onDeleteProcessedClip={handleDeleteProcessedClip}
+                    onClearOriginals={handleClearOriginals}
+                    onClearProcessed={handleClearProcessed}
+                  />
+                </div>
+              </div>
+            )}
+          </main>
+        </>
+      )}
+
+      <footer className="border-t border-[var(--border)] bg-[var(--surface)]">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--text-subtle)]">
+          <span className="font-mono tracking-wider uppercase text-[11px]">
+            LOBA VERSE · Mini Audio Mastering Lab
+          </span>
+          <div className="flex items-center gap-5">
+            <button
+              type="button"
+              onClick={() => navigateToPage('simple')}
+              className="hover:text-[var(--text)] transition-colors cursor-pointer"
+            >
+              Normal
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToPage('advanced')}
+              className="hover:text-[var(--text)] transition-colors cursor-pointer"
+            >
+              Advanced
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToPage('how-it-works')}
+              className="hover:text-[var(--text)] transition-colors cursor-pointer"
+            >
+              How It Works
+            </button>
           </div>
-        </div>
-      </main>
-
-      {/* Plain-Language "How It Works" + Limitations & Extension Ideas */}
-      <HowItWorks />
-
-      <footer className="border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#090D16]">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
-          <span>Mini Audio Mastering Lab · Local Web Audio API DSP Workbench</span>
-          <span>All decoding, analysis, and 16-bit WAV encoding run locally in your browser.</span>
         </div>
       </footer>
     </div>

@@ -60,7 +60,7 @@ export default function TransportDeck({
   }
 
   return (
-    <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-lg p-4 space-y-3.5">
+    <div className="bg-[var(--surface)] border border-[var(--border)] p-4 space-y-3.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* A/B Dedicated Play/Pause Controls */}
         <div className="flex flex-wrap items-center gap-2">
@@ -68,10 +68,10 @@ export default function TransportDeck({
             type="button"
             disabled={!hasOriginal}
             onClick={() => onTogglePlayTrack('original')}
-            className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-md border transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold border transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               activeSource === 'original' && hasOriginal
-                ? 'border-slate-900 dark:border-slate-200 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-950'
-                : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0D1320] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+                ? 'border-[var(--text)] bg-[var(--text)] text-[var(--bg)]'
+                : 'border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:bg-[var(--surface-hover)]'
             }`}
           >
             {isPlayingOriginal ? (
@@ -86,10 +86,10 @@ export default function TransportDeck({
             type="button"
             disabled={!hasProcessed}
             onClick={() => onTogglePlayTrack('processed')}
-            className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-md border transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold border transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               activeSource === 'processed' && hasProcessed
-                ? 'border-sky-600 dark:border-cyan-400 bg-sky-600 dark:bg-cyan-500 text-white dark:text-slate-950'
-                : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0D1320] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+                ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-ink)]'
+                : 'border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:bg-[var(--surface-hover)]'
             }`}
           >
             {isPlayingProcessed ? (
@@ -101,18 +101,18 @@ export default function TransportDeck({
           </button>
 
           <label
-            className="inline-flex items-center gap-1.5 ml-1 text-xs text-slate-600 dark:text-slate-300 cursor-pointer select-none"
+            className="inline-flex items-center gap-1.5 ml-1 text-xs text-[var(--text-muted)] cursor-pointer select-none"
             title="Attenuates the louder track during A/B playback so loudness differences never bias your ears"
           >
             <input
               type="checkbox"
               checked={Boolean(abMatchLoudness)}
               onChange={(e) => onToggleAbMatchLoudness?.(e.target.checked)}
-              className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 accent-sky-600 dark:accent-cyan-500 cursor-pointer"
+              className="w-3.5 h-3.5 accent-[var(--accent)] cursor-pointer"
             />
             <span>Matched-loudness A/B</span>
             {matchReadout && (
-              <span className="font-mono tabular-nums text-[11px] text-sky-700 dark:text-cyan-400">
+              <span className="font-mono tabular-nums text-[11px] text-[var(--accent)]">
                 ({matchReadout})
               </span>
             )}
@@ -125,10 +125,10 @@ export default function TransportDeck({
             type="button"
             disabled={!hasOriginal}
             onClick={onDownloadOriginalWav}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0D1320] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)] transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             title="Download the original / raw recording as a 16-bit WAV file"
           >
-            <Download className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+            <Download className="w-3.5 h-3.5 text-[var(--text-muted)]" />
             Original WAV
           </button>
 
@@ -136,10 +136,10 @@ export default function TransportDeck({
             type="button"
             disabled={!hasProcessed}
             onClick={onDownloadWav}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0D1320] text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-[var(--accent-border)] bg-[var(--accent-muted)] text-[var(--text)] hover:border-[var(--accent)] transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             title="Download the processed / mastered result as a 16-bit WAV file"
           >
-            <Download className="w-3.5 h-3.5 text-sky-600 dark:text-cyan-400" />
+            <Download className="w-3.5 h-3.5 text-[var(--accent)]" />
             Processed WAV
           </button>
         </div>
@@ -147,7 +147,7 @@ export default function TransportDeck({
 
       {/* Shared Seek Scrubber & Timecode */}
       <div className="flex items-center gap-3">
-        <span className="text-xs font-mono tabular-nums text-slate-700 dark:text-slate-200 w-16 shrink-0">
+        <span className="text-xs font-mono tabular-nums text-[var(--text)] w-16 shrink-0">
           {formatTimecode(currentTime)}
         </span>
 
@@ -163,18 +163,23 @@ export default function TransportDeck({
           className="lab-slider flex-1"
         />
 
-        <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400 w-16 text-right shrink-0">
+        <span className="text-xs font-mono tabular-nums text-[var(--text-subtle)] w-16 text-right shrink-0">
           {formatTimecode(activeDuration)}
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text-subtle)]">
         <span>Switch mid-playback to A/B compare · Keys: Space / A / B</span>
         {durationTrimmed && (
           <span>
             Silence trimming shortened track from{' '}
-            <span className="font-mono tabular-nums">{originalDuration.toFixed(2)} s</span> to{' '}
-            <span className="font-mono tabular-nums">{processedDuration.toFixed(2)} s</span>
+            <span className="font-mono tabular-nums text-[var(--text-muted)]">
+              {originalDuration.toFixed(2)} s
+            </span>{' '}
+            to{' '}
+            <span className="font-mono tabular-nums text-[var(--text-muted)]">
+              {processedDuration.toFixed(2)} s
+            </span>
           </span>
         )}
       </div>

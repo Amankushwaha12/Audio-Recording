@@ -13,81 +13,81 @@ function useResizeTick(ref) {
 }
 
 /**
- * Perceptual scientific color map for FFT spectrogram rendering.
- * Maps normalized intensity t in [0, 1] (-90 dB to -6 dB) to RGB.
+ * Perceptual scientific color map for FFT spectrogram rendering, tuned to
+ * Lobaverse / Quotly obsidian + warm gold + ivory palette.
  */
 function spectrogramColor(t, isDark) {
   const clamped = Math.max(0, Math.min(1, t));
   if (isDark) {
-    // Deep slate -> indigo -> teal/cyan -> warm amber -> bright white-yellow
+    // Obsidian black -> warm charcoal -> bronze -> Lobaverse gold -> bright ivory
     if (clamped < 0.25) {
       const k = clamped / 0.25;
       return [
-        Math.round(9 + k * 14),
-        Math.round(13 + k * 24),
-        Math.round(24 + k * 56),
+        Math.round(5 + k * 24),
+        Math.round(5 + k * 20),
+        Math.round(6 + k * 16),
       ];
     }
-    if (clamped < 0.55) {
-      const k = (clamped - 0.25) / 0.3;
+    if (clamped < 0.58) {
+      const k = (clamped - 0.25) / 0.33;
       return [
-        Math.round(23 - k * 15),
-        Math.round(37 + k * 125),
-        Math.round(80 + k * 115),
+        Math.round(29 + k * 115),
+        Math.round(25 + k * 82),
+        Math.round(22 + k * 28),
       ];
     }
-    if (clamped < 0.82) {
-      const k = (clamped - 0.55) / 0.27;
+    if (clamped < 0.84) {
+      const k = (clamped - 0.58) / 0.26;
       return [
-        Math.round(8 + k * 237),
-        Math.round(162 + k * 15),
-        Math.round(195 - k * 170),
+        Math.round(144 + k * 66),
+        Math.round(107 + k * 66),
+        Math.round(50 + k * 34),
       ];
     }
-    const k = (clamped - 0.82) / 0.18;
+    const k = (clamped - 0.84) / 0.16;
     return [
-      Math.round(245 + k * 10),
-      Math.round(177 + k * 75),
-      Math.round(25 + k * 210),
+      Math.round(210 + k * 45),
+      Math.round(173 + k * 76),
+      Math.round(84 + k * 145),
     ];
   } else {
-    // Light lab mode: crisp off-white -> pale slate -> cobalt/sky -> amber -> crimson
+    // Warm paper -> muted stone -> antique brass -> deep amber -> charcoal
     if (clamped < 0.25) {
       const k = clamped / 0.25;
       return [
-        Math.round(248 - k * 34),
+        Math.round(250 - k * 18),
         Math.round(250 - k * 22),
-        Math.round(252 - k * 8),
+        Math.round(248 - k * 30),
       ];
     }
-    if (clamped < 0.55) {
-      const k = (clamped - 0.25) / 0.3;
+    if (clamped < 0.58) {
+      const k = (clamped - 0.25) / 0.33;
       return [
-        Math.round(214 - k * 195),
-        Math.round(228 - k * 96),
-        Math.round(244 - k * 46),
+        Math.round(232 - k * 52),
+        Math.round(228 - k * 90),
+        Math.round(218 - k * 158),
       ];
     }
-    if (clamped < 0.82) {
-      const k = (clamped - 0.55) / 0.27;
+    if (clamped < 0.84) {
+      const k = (clamped - 0.58) / 0.26;
       return [
-        Math.round(19 + k * 215),
-        Math.round(132 - k * 20),
-        Math.round(198 - k * 182),
+        Math.round(180 - k * 45),
+        Math.round(138 - k * 58),
+        Math.round(60 - k * 40),
       ];
     }
-    const k = (clamped - 0.82) / 0.18;
+    const k = (clamped - 0.84) / 0.16;
     return [
-      Math.round(234 - k * 45),
-      Math.round(112 - k * 75),
-      Math.round(16 + k * 30),
+      Math.round(135 - k * 105),
+      Math.round(80 - k * 62),
+      Math.round(20 - k * 8),
     ];
   }
 }
 
 /**
  * Single high-DPI Waveform Canvas with peak + RMS layers, dB gridlines,
- * synchronized playhead, and click-to-seek.
+ * synchronized playhead, click-to-seek, and optional drag-to-select noise sample.
  */
 function WaveformCanvas({
   title,
@@ -127,14 +127,14 @@ function WaveformCanvas({
     ctx.save();
     ctx.scale(dpr, dpr);
 
-    // Background
-    ctx.fillStyle = isDark ? '#0B101B' : '#F8FAFC';
+    // Background (Obsidian dark / Warm paper light)
+    ctx.fillStyle = isDark ? '#050506' : '#FAFAF8';
     ctx.fillRect(0, 0, width, height);
 
     const midY = height / 2;
 
-    // Horizontal reference grid (0 dB, -6 dB = 0.5, center = -inf)
-    ctx.strokeStyle = isDark ? 'rgba(148, 163, 184, 0.14)' : 'rgba(15, 23, 42, 0.08)';
+    // Horizontal reference grid
+    ctx.strokeStyle = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(17, 17, 19, 0.08)';
     ctx.lineWidth = 1;
     [0.25, 0.5, 0.75].forEach((ratio) => {
       const y = Math.round(height * ratio) + 0.5;
@@ -145,13 +145,13 @@ function WaveformCanvas({
     });
 
     if (!analysis?.waveform) {
-      ctx.fillStyle = isDark ? '#64748B' : '#94A3B8';
-      ctx.font = '12px "IBM Plex Sans", sans-serif';
+      ctx.fillStyle = isDark ? 'rgba(230, 230, 234, 0.45)' : 'rgba(82, 82, 91, 0.65)';
+      ctx.font = '12px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(
         variant === 'processed'
-          ? 'Click "Process Audio" to generate processed waveform'
-          : 'Load an audio file to inspect waveform',
+          ? 'Click "Clean Audio" or "Process Audio" to render processed waveform'
+          : 'Load an audio file or Demo Audio to inspect waveform',
         width / 2,
         midY + 4
       );
@@ -163,20 +163,20 @@ function WaveformCanvas({
     const peakColor =
       variant === 'processed'
         ? isDark
-          ? 'rgba(6, 182, 212, 0.55)'
-          : 'rgba(2, 132, 199, 0.45)'
+          ? 'rgba(201, 162, 75, 0.42)'
+          : 'rgba(154, 114, 30, 0.36)'
         : isDark
-          ? 'rgba(148, 163, 184, 0.48)'
-          : 'rgba(71, 85, 105, 0.42)';
+          ? 'rgba(230, 230, 234, 0.32)'
+          : 'rgba(44, 44, 50, 0.30)';
 
     const rmsColor =
       variant === 'processed'
         ? isDark
-          ? '#22D3EE'
-          : '#0284C7'
+          ? '#C9A24B'
+          : '#9A721E'
         : isDark
-          ? '#CBD5E1'
-          : '#334155';
+          ? '#D4D4D8'
+          : '#2C2C32';
 
     const usableHalfH = midY - 8;
 
@@ -186,10 +186,10 @@ function WaveformCanvas({
       const x2 = Math.max(0, Math.min(width, (activeSelection.endSec / analysis.duration) * width));
       const rx = Math.min(x1, x2);
       const rw = Math.max(2, Math.abs(x2 - x1));
-      ctx.fillStyle = isDark ? 'rgba(245, 158, 11, 0.18)' : 'rgba(217, 119, 6, 0.16)';
+      ctx.fillStyle = isDark ? 'rgba(201, 162, 75, 0.16)' : 'rgba(154, 114, 30, 0.14)';
       ctx.fillRect(rx, 0, rw, height);
-      ctx.strokeStyle = isDark ? 'rgba(251, 191, 36, 0.85)' : 'rgba(180, 83, 9, 0.8)';
-      ctx.lineWidth = 1.25;
+      ctx.strokeStyle = isDark ? '#C9A24B' : '#9A721E';
+      ctx.lineWidth = 1;
       ctx.strokeRect(rx + 0.5, 0.5, Math.max(1, rw - 1), height - 1);
     }
 
@@ -212,8 +212,8 @@ function WaveformCanvas({
     }
 
     // dB scale hints
-    ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.65)' : 'rgba(71, 85, 105, 0.65)';
-    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.fillStyle = isDark ? 'rgba(230, 230, 234, 0.55)' : 'rgba(82, 82, 91, 0.65)';
+    ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = 'left';
     ctx.fillText('0 dB', 6, 12);
     ctx.fillText('-6 dB', 6, Math.round(height * 0.25) - 3);
@@ -222,10 +222,13 @@ function WaveformCanvas({
     if (activeSelection && analysis.duration > 0) {
       const rx = Math.max(
         4,
-        Math.min(width - 135, (Math.min(activeSelection.startSec, activeSelection.endSec) / analysis.duration) * width + 4)
+        Math.min(
+          width - 135,
+          (Math.min(activeSelection.startSec, activeSelection.endSec) / analysis.duration) * width + 4
+        )
       );
-      ctx.fillStyle = isDark ? '#FCD34D' : '#92400E';
-      ctx.font = '10px "IBM Plex Mono", monospace';
+      ctx.fillStyle = isDark ? '#E9C77B' : '#835F16';
+      ctx.font = '10px "JetBrains Mono", monospace';
       ctx.fillText(
         `Noise ${activeSelection.startSec.toFixed(2)}–${activeSelection.endSec.toFixed(2)}s`,
         rx,
@@ -235,17 +238,14 @@ function WaveformCanvas({
 
     // Synchronized playhead
     if (analysis.duration > 0) {
-      const playX = Math.max(
-        0,
-        Math.min(width - 1, (currentTime / analysis.duration) * width)
-      );
+      const playX = Math.max(0, Math.min(width - 1, (currentTime / analysis.duration) * width));
       ctx.strokeStyle = isActiveSource
         ? isDark
-          ? '#F59E0B'
-          : '#D97706'
+          ? '#FFFFFF'
+          : '#111113'
         : isDark
-          ? 'rgba(245, 158, 11, 0.45)'
-          : 'rgba(217, 119, 6, 0.45)';
+          ? 'rgba(255, 255, 255, 0.4)'
+          : 'rgba(17, 17, 19, 0.35)';
       ctx.lineWidth = isActiveSource ? 1.5 : 1;
       ctx.beginPath();
       ctx.moveTo(playX + 0.5, 0);
@@ -256,7 +256,7 @@ function WaveformCanvas({
     // Hover cursor guide
     if (hoverTime != null && analysis.duration > 0) {
       const hx = (hoverTime / analysis.duration) * width;
-      ctx.strokeStyle = isDark ? 'rgba(226, 232, 240, 0.35)' : 'rgba(15, 23, 42, 0.25)';
+      ctx.strokeStyle = isDark ? 'rgba(201, 162, 75, 0.45)' : 'rgba(154, 114, 30, 0.4)';
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(hx + 0.5, 0);
@@ -335,16 +335,16 @@ function WaveformCanvas({
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2">
-          <span className="font-medium text-slate-700 dark:text-slate-200">{title}</span>
+          <span className="font-medium text-[var(--text-secondary)]">{title}</span>
           {variant === 'original' && analysis && onToggleSelectingNoise && (
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => onToggleSelectingNoise(!isSelectingNoise)}
-                className={`px-1.5 py-0.5 text-[11px] font-medium rounded border transition-colors cursor-pointer ${
+                className={`px-1.5 py-0.5 text-[11px] font-medium border transition-colors cursor-pointer ${
                   isSelectingNoise
-                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300'
-                    : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-ink)]'
+                    : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:text-[var(--text)]'
                 }`}
                 title="Drag across a quiet noise-only pause on this waveform (or hold Shift + drag)"
               >
@@ -354,7 +354,7 @@ function WaveformCanvas({
                 <button
                   type="button"
                   onClick={() => onSelectNoiseRegion?.(null)}
-                  className="text-[11px] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 underline underline-offset-2 cursor-pointer"
+                  className="text-[11px] text-[var(--text-subtle)] hover:text-[var(--text)] underline underline-offset-2 cursor-pointer"
                 >
                   Clear
                 </button>
@@ -362,7 +362,7 @@ function WaveformCanvas({
             </div>
           )}
         </div>
-        <span className="font-mono tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
+        <span className="font-mono tabular-nums text-[11px] text-[var(--text-subtle)]">
           {hoverTime != null
             ? `Cursor: ${hoverTime.toFixed(2)} s`
             : analysis
@@ -377,10 +377,10 @@ function WaveformCanvas({
         onClick={handleClick}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
-        className={`w-full h-[136px] rounded border block select-none ${
+        className={`w-full h-[136px] border block select-none ${
           variant === 'original' && isSelectingNoise
-            ? 'border-amber-500 dark:border-amber-400 cursor-col-resize'
-            : 'border-slate-200 dark:border-slate-800 cursor-crosshair'
+            ? 'border-[var(--accent)] cursor-col-resize'
+            : 'border-[var(--border)] cursor-crosshair'
         }`}
         aria-label={`${title} waveform visualization`}
       />
@@ -391,13 +391,7 @@ function WaveformCanvas({
 /**
  * Single high-DPI FFT Spectrogram Canvas using offscreen ImageData for speed.
  */
-function SpectrogramCanvas({
-  title,
-  analysis,
-  currentTime,
-  isDark,
-  onSeek,
-}) {
+function SpectrogramCanvas({ title, analysis, currentTime, isDark, onSeek }) {
   const canvasRef = useRef(null);
   const resizeTick = useResizeTick(canvasRef);
   const imgCacheRef = useRef({ key: null, offscreen: null });
@@ -419,12 +413,12 @@ function SpectrogramCanvas({
     ctx.save();
     ctx.scale(dpr, dpr);
 
-    ctx.fillStyle = isDark ? '#0B101B' : '#F8FAFC';
+    ctx.fillStyle = isDark ? '#050506' : '#FAFAF8';
     ctx.fillRect(0, 0, width, height);
 
     if (!analysis?.spectrogram) {
-      ctx.fillStyle = isDark ? '#64748B' : '#94A3B8';
-      ctx.font = '12px "IBM Plex Sans", sans-serif';
+      ctx.fillStyle = isDark ? 'rgba(230, 230, 234, 0.45)' : 'rgba(82, 82, 91, 0.65)';
+      ctx.font = '12px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('Awaiting audio data for FFT spectrogram', width / 2, height / 2 + 4);
       ctx.restore();
@@ -434,7 +428,6 @@ function SpectrogramCanvas({
     const spec = analysis.spectrogram;
     const cacheKey = `${spec.frames}_${spec.bins}_${isDark}_${spec.data[0]}_${spec.data[spec.data.length - 1]}`;
 
-    // Cache rendered spectrogram pixels so playhead animation costs almost zero CPU
     let offscreen = imgCacheRef.current.offscreen;
     if (imgCacheRef.current.key !== cacheKey) {
       offscreen = document.createElement('canvas');
@@ -451,7 +444,6 @@ function SpectrogramCanvas({
           const db = spec.data[frameOff + b];
           const norm = (db - spec.minDb) / range;
           const [r, g, bl] = spectrogramColor(norm, isDark);
-          // Flip vertically so low frequencies sit at the bottom
           const y = spec.bins - 1 - b;
           const idx = (y * spec.frames + f) * 4;
           px[idx] = r;
@@ -467,33 +459,28 @@ function SpectrogramCanvas({
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(offscreen, 0, 0, width, height);
 
-    // Frequency grid lines & labels
     const maxKhz = spec.maxFreqHz / 1000;
     const freqMarks = [0.2, 1, 2, 4, 8].filter((k) => k < maxKhz);
-    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = 'left';
 
     freqMarks.forEach((khz) => {
       const y = height - (khz / maxKhz) * height;
-      ctx.strokeStyle = isDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(15, 23, 42, 0.14)';
+      ctx.strokeStyle = isDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(17, 17, 19, 0.14)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(0, Math.round(y) + 0.5);
       ctx.lineTo(width, Math.round(y) + 0.5);
       ctx.stroke();
 
-      ctx.fillStyle = isDark ? 'rgba(241, 245, 249, 0.85)' : 'rgba(15, 23, 42, 0.85)';
+      ctx.fillStyle = isDark ? 'rgba(255, 255, 255, 0.85)' : 'rgba(17, 17, 19, 0.85)';
       const label = khz < 1 ? `${Math.round(khz * 1000)} Hz` : `${khz} kHz`;
       ctx.fillText(label, 6, Math.max(11, y - 3));
     });
 
-    // Playhead
     if (analysis.duration > 0) {
-      const playX = Math.max(
-        0,
-        Math.min(width - 1, (currentTime / analysis.duration) * width)
-      );
-      ctx.strokeStyle = isDark ? '#F59E0B' : '#D97706';
+      const playX = Math.max(0, Math.min(width - 1, (currentTime / analysis.duration) * width));
+      ctx.strokeStyle = isDark ? '#FFFFFF' : '#111113';
       ctx.lineWidth = 1.25;
       ctx.beginPath();
       ctx.moveTo(playX + 0.5, 0);
@@ -527,8 +514,8 @@ function SpectrogramCanvas({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs">
-        <span className="font-medium text-slate-700 dark:text-slate-200">{title}</span>
-        <span className="font-mono tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
+        <span className="font-medium text-[var(--text-secondary)]">{title}</span>
+        <span className="font-mono tabular-nums text-[11px] text-[var(--text-subtle)]">
           {hoverInfo
             ? `${hoverInfo.time.toFixed(2)} s · ${hoverInfo.freqLabel}`
             : analysis?.spectrogram
@@ -541,7 +528,7 @@ function SpectrogramCanvas({
         onClick={handleClick}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHoverInfo(null)}
-        className="w-full h-[152px] rounded border border-slate-200 dark:border-slate-800 cursor-crosshair block"
+        className="w-full h-[152px] border border-[var(--border)] cursor-crosshair block"
         aria-label={`${title} spectrogram visualization`}
       />
     </div>
@@ -550,8 +537,7 @@ function SpectrogramCanvas({
 
 /**
  * Synchronized Short-Term LUFS Loudness-Over-Time Canvas plotting Original
- * (dashed slate) and Processed (solid sky/cyan) with target reference line
- * and interactive crosshair readout.
+ * (dashed muted) and Processed (solid Lobaverse gold).
  */
 function LoudnessTimelineCanvas({
   originalAnalysis,
@@ -598,7 +584,7 @@ function LoudnessTimelineCanvas({
     const plotW = Math.max(10, width - padL - padR);
     const plotH = Math.max(10, height - padT - padB);
 
-    ctx.fillStyle = isDark ? '#0B101B' : '#F8FAFC';
+    ctx.fillStyle = isDark ? '#050506' : '#FAFAF8';
     ctx.fillRect(0, 0, width, height);
 
     const yForLufs = (val) => {
@@ -612,37 +598,39 @@ function LoudnessTimelineCanvas({
       return padL + (t / maxDuration) * plotW;
     };
 
-    // Horizontal LUFS grid
     const gridLevels = [-10, -16, -23, -35, -50];
-    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = 'right';
 
     gridLevels.forEach((lvl) => {
       const y = Math.round(yForLufs(lvl)) + 0.5;
-      ctx.strokeStyle = isDark ? 'rgba(148, 163, 184, 0.14)' : 'rgba(15, 23, 42, 0.08)';
+      ctx.strokeStyle = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(17, 17, 19, 0.08)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(padL, y);
       ctx.lineTo(width - padR, y);
       ctx.stroke();
 
-      ctx.fillStyle = isDark ? '#94A3B8' : '#64748B';
+      ctx.fillStyle = isDark ? 'rgba(230, 230, 234, 0.55)' : 'rgba(82, 82, 91, 0.7)';
       ctx.fillText(`${lvl}`, padL - 8, y + 3);
     });
 
     if (!originalAnalysis?.shortTermSeries?.length) {
-      ctx.fillStyle = isDark ? '#64748B' : '#94A3B8';
-      ctx.font = '12px "IBM Plex Sans", sans-serif';
+      ctx.fillStyle = isDark ? 'rgba(230, 230, 234, 0.45)' : 'rgba(82, 82, 91, 0.65)';
+      ctx.font = '12px "Plus Jakarta Sans", sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('Load an audio file to plot short-term LUFS loudness over time', width / 2, height / 2 + 4);
+      ctx.fillText(
+        'Load an audio file to plot short-term LUFS loudness over time',
+        width / 2,
+        height / 2 + 4
+      );
       ctx.restore();
       return;
     }
 
-    // Target loudness guide line
     if (normalizeEnabled && Number.isFinite(targetLoudness)) {
       const ty = Math.round(yForLufs(targetLoudness)) + 0.5;
-      ctx.strokeStyle = isDark ? 'rgba(16, 185, 129, 0.55)' : 'rgba(5, 150, 105, 0.55)';
+      ctx.strokeStyle = isDark ? 'rgba(61, 220, 151, 0.55)' : 'rgba(21, 128, 61, 0.55)';
       ctx.setLineDash([5, 4]);
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -651,7 +639,7 @@ function LoudnessTimelineCanvas({
       ctx.stroke();
       ctx.setLineDash([]);
 
-      ctx.fillStyle = isDark ? '#34D399' : '#059669';
+      ctx.fillStyle = isDark ? '#3DDC97' : '#15803D';
       ctx.textAlign = 'right';
       ctx.fillText(
         `Target ${targetLoudness} ${normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`,
@@ -660,7 +648,6 @@ function LoudnessTimelineCanvas({
       );
     }
 
-    // Helper to draw a curve
     const drawCurve = (series, strokeStyle, dashed, fillAlpha) => {
       if (!series || series.length < 2) return;
 
@@ -690,27 +677,26 @@ function LoudnessTimelineCanvas({
       ctx.setLineDash([]);
     };
 
-    // Original series (dashed slate)
+    // Original series (dashed muted)
     drawCurve(
       originalAnalysis.shortTermSeries,
-      isDark ? '#94A3B8' : '#64748B',
+      isDark ? 'rgba(230, 230, 234, 0.55)' : '#52525B',
       true,
       null
     );
 
-    // Processed series (solid calibrated cyan/sky)
+    // Processed series (solid Lobaverse gold)
     if (processedAnalysis?.shortTermSeries?.length) {
       drawCurve(
         processedAnalysis.shortTermSeries,
-        isDark ? '#06B6D4' : '#0284C7',
+        isDark ? '#C9A24B' : '#9A721E',
         false,
-        isDark ? 'rgba(6, 182, 212, 0.12)' : 'rgba(2, 132, 199, 0.10)'
+        isDark ? 'rgba(201, 162, 75, 0.14)' : 'rgba(154, 114, 30, 0.10)'
       );
     }
 
-    // Time ticks along bottom
     const tickCount = 5;
-    ctx.fillStyle = isDark ? '#94A3B8' : '#64748B';
+    ctx.fillStyle = isDark ? 'rgba(230, 230, 234, 0.55)' : 'rgba(82, 82, 91, 0.7)';
     ctx.textAlign = 'center';
     for (let i = 0; i <= tickCount; i++) {
       const t = (i / tickCount) * maxDuration;
@@ -718,10 +704,9 @@ function LoudnessTimelineCanvas({
       ctx.fillText(`${t.toFixed(1)}s`, x, height - 7);
     }
 
-    // Synchronized playhead
     if (maxDuration > 0) {
       const px = xForTime(Math.min(currentTime, maxDuration));
-      ctx.strokeStyle = isDark ? '#F59E0B' : '#D97706';
+      ctx.strokeStyle = isDark ? '#FFFFFF' : '#111113';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(px + 0.5, padT);
@@ -729,10 +714,9 @@ function LoudnessTimelineCanvas({
       ctx.stroke();
     }
 
-    // Hover crosshair
     if (probe) {
       const hx = xForTime(probe.time);
-      ctx.strokeStyle = isDark ? 'rgba(226, 232, 240, 0.4)' : 'rgba(15, 23, 42, 0.3)';
+      ctx.strokeStyle = isDark ? 'rgba(201, 162, 75, 0.45)' : 'rgba(154, 114, 30, 0.4)';
       ctx.setLineDash([2, 2]);
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -799,26 +783,26 @@ function LoudnessTimelineCanvas({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-4">
-          <span className="font-medium text-slate-800 dark:text-slate-100">
+          <span className="font-semibold text-[var(--text)]">
             Loudness Over Time (Short-Term{' '}
             {originalAnalysis?.shortTermWindowSec
               ? `${originalAnalysis.shortTermWindowSec.toFixed(0)} s`
               : '3 s'}{' '}
             LUFS)
           </span>
-          <div className="flex items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400">
+          <div className="flex items-center gap-3 text-[11px] text-[var(--text-subtle)]">
             <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block w-4 border-t-2 border-dashed border-slate-500 dark:border-slate-400" />
+              <span className="inline-block w-4 border-t-2 border-dashed border-[var(--text-muted)]" />
               Original
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block w-4 border-t-2 border-sky-600 dark:border-cyan-400" />
+              <span className="inline-block w-4 border-t-2 border-[var(--accent)]" />
               Processed
             </span>
           </div>
         </div>
 
-        <span className="font-mono tabular-nums text-[11px] text-slate-600 dark:text-slate-300">
+        <span className="font-mono tabular-nums text-[11px] text-[var(--text-muted)]">
           {probe
             ? `t=${probe.time.toFixed(2)} s · Orig: ${
                 probe.origLufs != null ? `${probe.origLufs.toFixed(1)} LUFS` : '—'
@@ -834,7 +818,7 @@ function LoudnessTimelineCanvas({
         onClick={handleClick}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setProbe(null)}
-        className="w-full h-[176px] rounded border border-slate-200 dark:border-slate-800 cursor-crosshair block"
+        className="w-full h-[176px] border border-[var(--border)] cursor-crosshair block"
         aria-label="Short-term LUFS loudness over time graph"
       />
     </div>
@@ -847,12 +831,14 @@ export default function Visualizations({
   activeSource,
   currentTime,
   options,
+  voiceCleanOptions,
   theme,
   onSeek,
   noiseRegion,
   isSelectingNoise,
   onSelectNoiseRegion,
   onToggleSelectingNoise,
+  compact = false,
 }) {
   const isDark = theme === 'dark';
 
@@ -860,16 +846,16 @@ export default function Visualizations({
     <section
       id="visualizers"
       aria-label="Audio visualizations"
-      className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-lg divide-y divide-slate-200 dark:divide-slate-800"
+      className="bg-[var(--surface)] border border-[var(--border)] divide-y divide-[var(--border)]"
     >
       {/* 1. Side-by-side Waveforms */}
       <div className="p-4 space-y-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+          <h2 className="text-sm font-bold tracking-tight text-[var(--text)]">
             Waveforms (Side by Side)
           </h2>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Outer shade: peak amplitude · Solid core: RMS energy · Click to seek · Shift+drag Original for noise sample
+          <span className="text-xs text-[var(--text-subtle)]">
+            Outer shade: peak · Core: RMS · Click to seek · Shift+drag Original for noise sample
           </span>
         </div>
 
@@ -899,66 +885,81 @@ export default function Visualizations({
         </div>
       </div>
 
-      {/* 2. Side-by-side FFT Spectrograms */}
-      <div className="p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              FFT Spectrograms (Side by Side)
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Compare low-end rumble (bottom band) and background hiss between words before and
-              after filtering and gating.
-            </p>
+      {/* 2. Side-by-side FFT Spectrograms (Advanced mode) */}
+      {!compact && (
+        <div className="p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-bold tracking-tight text-[var(--text)]">
+                FFT Spectrograms (Side by Side)
+              </h2>
+              <p className="text-xs text-[var(--text-subtle)] mt-0.5">
+                Compare low-end rumble and background hiss between words before and after cleaning.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 text-[11px] font-mono tabular-nums text-[var(--text-subtle)]">
+              <span>-90 dB</span>
+              <div
+                aria-hidden="true"
+                className="w-24 h-2.5 border border-[var(--border)]"
+                style={{
+                  background: isDark
+                    ? 'linear-gradient(90deg, #050506 0%, #1D1916 26%, #906B32 58%, #D2AD54 84%, #FFF9E5 100%)'
+                    : 'linear-gradient(90deg, #FAFAF8 0%, #E8E4DA 26%, #B48A3C 58%, #875014 84%, #1E120C 100%)',
+                }}
+              />
+              <span>-6 dB</span>
+            </div>
           </div>
 
-          {/* Calibrated dB color scale legend */}
-          <div className="flex items-center gap-2 text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-            <span>-90 dB</span>
-            <div
-              aria-hidden="true"
-              className="w-24 h-2.5 rounded-xs border border-slate-300 dark:border-slate-700"
-              style={{
-                background: isDark
-                  ? 'linear-gradient(90deg, #090D18 0%, #172550 28%, #08A2C3 56%, #F5B119 84%, #FFFCEB 100%)'
-                  : 'linear-gradient(90deg, #F8FAFC 0%, #D6E4F4 28%, #1384C6 56%, #EA7010 84%, #BD252E 100%)',
-              }}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <SpectrogramCanvas
+              title="Original Spectrum"
+              analysis={originalAnalysis}
+              currentTime={currentTime}
+              isDark={isDark}
+              onSeek={onSeek}
             />
-            <span>-6 dB</span>
+            <SpectrogramCanvas
+              title="Processed Spectrum"
+              analysis={processedAnalysis}
+              currentTime={currentTime}
+              isDark={isDark}
+              onSeek={onSeek}
+            />
           </div>
         </div>
+      )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <SpectrogramCanvas
-            title="Original Spectrum"
-            analysis={originalAnalysis}
-            currentTime={currentTime}
-            isDark={isDark}
-            onSeek={onSeek}
-          />
-          <SpectrogramCanvas
-            title="Processed Spectrum"
-            analysis={processedAnalysis}
+      {/* 3. Loudness Over Time (Advanced mode) */}
+      {!compact && (
+        <div className="p-4">
+          <LoudnessTimelineCanvas
+            originalAnalysis={originalAnalysis}
+            processedAnalysis={processedAnalysis}
+            targetLoudness={
+              voiceCleanOptions?.enabled &&
+              voiceCleanOptions?.keepOriginalLoudness &&
+              originalAnalysis?.integratedLufs > -65
+                ? Number(originalAnalysis.integratedLufs.toFixed(1))
+                : options.targetLoudness
+            }
+            normalizeEnabled={
+              (voiceCleanOptions?.enabled && voiceCleanOptions?.keepOriginalLoudness) ||
+              options.normalizeEnabled
+            }
+            normalizeMode={
+              voiceCleanOptions?.enabled && voiceCleanOptions?.keepOriginalLoudness
+                ? 'lufs'
+                : options.normalizeMode
+            }
             currentTime={currentTime}
             isDark={isDark}
             onSeek={onSeek}
           />
         </div>
-      </div>
-
-      {/* 3. Loudness Over Time (Short-Term LUFS) */}
-      <div className="p-4">
-        <LoudnessTimelineCanvas
-          originalAnalysis={originalAnalysis}
-          processedAnalysis={processedAnalysis}
-          targetLoudness={options.targetLoudness}
-          normalizeEnabled={options.normalizeEnabled}
-          normalizeMode={options.normalizeMode}
-          currentTime={currentTime}
-          isDark={isDark}
-          onSeek={onSeek}
-        />
-      </div>
+      )}
     </section>
   );
 }

@@ -302,6 +302,27 @@ export const DeepFilterWasmDenoiser = {
 
     return outChannels;
   },
+
+  /**
+   * Standard `AiDenoiser.process(buffer, opts)` method for main-thread callers.
+   * Copies channels without mutating the input `AudioBuffer`.
+   */
+  async process(audioBuffer, opts = {}) {
+    const numChannels = audioBuffer.numberOfChannels;
+    const sampleRate = audioBuffer.sampleRate;
+    const copies = [];
+    for (let ch = 0; ch < numChannels; ch++) {
+      copies.push(Float32Array.from(audioBuffer.getChannelData(ch)));
+    }
+    const cleaned = await this.processChannels(copies, sampleRate, opts);
+    const outLen = Math.max(1, cleaned[0]?.length || audioBuffer.length);
+    const offlineCtx = new OfflineAudioContext(numChannels, outLen, sampleRate);
+    const outBuf = offlineCtx.createBuffer(numChannels, outLen, sampleRate);
+    for (let ch = 0; ch < numChannels; ch++) {
+      outBuf.copyToChannel(cleaned[ch], ch);
+    }
+    return outBuf;
+  },
 };
 
 /**
