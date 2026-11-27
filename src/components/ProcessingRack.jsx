@@ -1,6 +1,8 @@
 import React from 'react';
-import { SlidersHorizontal, Play, RotateCcw, Cpu } from 'lucide-react';
+import { SlidersHorizontal, Play, RotateCcw, Cpu, Sparkles, X } from 'lucide-react';
 import { LOUDNESS_PRESETS, PRESETS } from '../audio/processor.js';
+import { VOICE_CLEAN_PRESETS } from '../audio/voiceCleanCore.js';
+import { ENABLE_AI_DENOISER } from '../audio/aiDenoiser.js';
 
 function SliderField({
   id,
@@ -97,11 +99,19 @@ export default function ProcessingRack({
   onChangeEngine,
   dfOptions,
   onChangeDfOption,
+  voiceCleanOptions,
+  onChangeVoiceCleanOption,
+  onApplyVoiceCleanPreset,
+  noiseRegion,
+  isSelectingNoise,
+  onToggleSelectingNoise,
+  onClearNoiseRegion,
   options,
   activePresetId,
   onApplyPreset,
   onChangeOption,
   onProcess,
+  onCancelProcess,
   isProcessing,
   progress,
   hasAudio,
@@ -109,6 +119,7 @@ export default function ProcessingRack({
 }) {
   const isDeepFilter = processingEngine === 'deepfilternet';
   const showMasteringStages = !isDeepFilter || dfOptions.chainMastering;
+  const vcEnabled = Boolean(voiceCleanOptions?.enabled);
 
   return (
     <aside
@@ -278,6 +289,160 @@ export default function ProcessingRack({
         </div>
       </div>
 
+      {/* New Voice Clean Section (runs in a Web Worker BEFORE existing mastering stages) */}
+      {voiceCleanOptions && (
+        <div className="px-4 py-3.5 border-b border-slate-200 dark:border-slate-800 bg-sky-50/40 dark:bg-cyan-950/15 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <label className="flex items-start gap-2.5 cursor-pointer select-none min-w-0">
+              <input
+                type="checkbox"
+                checked={vcEnabled}
+                onChange={(e) => onChangeVoiceCleanOption('enabled', e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-slate-300 dark:border-slate-600 accent-sky-600 dark:accent-cyan-500 cursor-pointer"
+              />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 leading-snug">
+                  <Sparkles className="w-3.5 h-3.5 text-sky-600 dark:text-cyan-400 shrink-0" />
+                  <span>Voice Clean</span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Worker DSP: noise &amp; room reverb cleanup, natural blend, de-ess &amp; loudness match
+                </p>
+              </div>
+            </label>
+            <span className="text-xs font-mono text-sky-700 dark:text-cyan-400 whitespace-nowrap shrink-0 mt-0.5">
+              {vcEnabled ? 'Active' : 'Bypass'}
+            </span>
+          </div>
+
+          <div className={`pl-6.5 space-y-3 transition-opacity ${vcEnabled ? 'opacity-100' : 'opacity-45'}`}>
+            {/* Preset dropdown */}
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <label
+                htmlFor="vc-preset"
+                className={vcEnabled ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400 dark:text-slate-600'}
+              >
+                Preset
+              </label>
+              <select
+                id="vc-preset"
+                value={voiceCleanOptions.preset || 'custom'}
+                disabled={!vcEnabled}
+                onChange={(e) => onApplyVoiceCleanPreset(e.target.value)}
+                className="px-2 py-1 text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0D1320] text-slate-800 dark:text-slate-100 cursor-pointer disabled:opacity-50"
+              >
+                {Object.values(VOICE_CLEAN_PRESETS).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+                {voiceCleanOptions.preset === 'custom' && <option value="custom">Custom</option>}
+              </select>
+            </div>
+
+            <SliderField
+              id="vc-noise"
+              label="Noise reduction"
+              value={voiceCleanOptions.noiseReduction}
+              displayValue={`${voiceCleanOptions.noiseReduction}%`}
+              min={0}
+              max={100}
+              step={1}
+              disabled={!vcEnabled}
+              onChange={(val) => onChangeVoiceCleanOption('noiseReduction', val)}
+            />
+
+            <SliderField
+              id="vc-reverb"
+              label="Reverb reduction"
+              value={voiceCleanOptions.reverbReduction}
+              displayValue={`${voiceCleanOptions.reverbReduction}%`}
+              min={0}
+              max={100}
+              step={1}
+              disabled={!vcEnabled}
+              onChange={(val) => onChangeVoiceCleanOption('reverbReduction', val)}
+            />
+
+            <SliderField
+              id="vc-blend"
+              label="Keep natural voice"
+              value={voiceCleanOptions.naturalBlend}
+              displayValue={`${voiceCleanOptions.naturalBlend}%`}
+              min={0}
+              max={50}
+              step={1}
+              disabled={!vcEnabled}
+              onChange={(val) => onChangeVoiceCleanOption('naturalBlend', val)}
+            />
+
+            {/* Keep original loudness toggle */}
+            <label className="flex items-start gap-2 cursor-pointer select-none pt-0.5">
+              <input
+                type="checkbox"
+                checked={Boolean(voiceCleanOptions.keepOriginalLoudness)}
+                disabled={!vcEnabled}
+                onChange={(e) => onChangeVoiceCleanOption('keepOriginalLoudness', e.target.checked)}
+                className="mt-0.5 w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 accent-sky-600 dark:accent-cyan-500 cursor-pointer"
+              />
+              <span className="text-xs text-slate-700 dark:text-slate-300 leading-snug">
+                Keep original loudness <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">(±0.5 LU, -1.5 dBTP)</span>
+              </span>
+            </label>
+
+            {/* Stage 2: Optional DeepFilterNet AI denoise behind feature flag */}
+            {ENABLE_AI_DENOISER && (
+              <label className="flex items-start gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={Boolean(voiceCleanOptions.useAiDenoise)}
+                  disabled={!vcEnabled}
+                  onChange={(e) => onChangeVoiceCleanOption('useAiDenoise', e.target.checked)}
+                  className="mt-0.5 w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 accent-sky-600 dark:accent-cyan-500 cursor-pointer"
+                />
+                <span className="text-xs text-slate-700 dark:text-slate-300 leading-snug">
+                  AI denoise (DeepFilterNet)
+                  <span className="block text-[11px] text-slate-500 dark:text-slate-400">
+                    Replaces spectral denoise in worker; keeps reverb, blend &amp; loudness match
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {/* User-selected noise sample region control */}
+            {!voiceCleanOptions.useAiDenoise && (
+              <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={!vcEnabled || !hasAudio}
+                  onClick={() => onToggleSelectingNoise?.(!isSelectingNoise)}
+                  className={`px-2 py-1 text-[11px] font-medium rounded border transition-colors cursor-pointer disabled:opacity-40 ${
+                    isSelectingNoise
+                      ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300'
+                      : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0D1320] text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {isSelectingNoise
+                    ? 'Drag noise region on waveform...'
+                    : noiseRegion
+                      ? `Noise sample: ${noiseRegion.startSec.toFixed(2)}–${noiseRegion.endSec.toFixed(2)}s`
+                      : 'Use selected region as noise sample'}
+                </button>
+                {noiseRegion && (
+                  <button
+                    type="button"
+                    onClick={onClearNoiseRegion}
+                    className="text-[11px] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 underline cursor-pointer"
+                  >
+                    Auto
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Ordered DSP Stages (a through f) */}
       {showMasteringStages ? (
         <div className="px-4 py-1 divide-y-0">
@@ -302,16 +467,18 @@ export default function ProcessingRack({
           />
         </StageSection>
 
-        {/* Stage b: Noise reduction (Spectral Wiener / Gate, or replaced by DeepFilterNet3) */}
-        {isDeepFilter ? (
+        {/* Stage b: Noise reduction (Spectral Wiener / Gate, or replaced by Voice Clean / DeepFilterNet3) */}
+        {isDeepFilter || vcEnabled ? (
           <div className="py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
             <div>
               <span className="font-mono mr-1.5">b.</span>
               <span className="font-medium text-slate-700 dark:text-slate-300">
-                Noise Reduction handled by DeepFilterNet3
+                Noise Reduction handled by {vcEnabled ? 'Voice Clean' : 'DeepFilterNet3'}
               </span>
             </div>
-            <span className="font-mono text-sky-700 dark:text-cyan-400 shrink-0">Neural</span>
+            <span className="font-mono text-sky-700 dark:text-cyan-400 shrink-0">
+              {vcEnabled ? (voiceCleanOptions.useAiDenoise ? 'AI Worker' : 'Worker STFT') : 'Neural'}
+            </span>
           </div>
         ) : (
           <StageSection
@@ -629,13 +796,25 @@ export default function ProcessingRack({
 
         {isProcessing && (
           <div className="space-y-1.5" aria-live="polite">
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center justify-between gap-2 text-xs">
               <span className="text-slate-600 dark:text-slate-300 truncate">
                 {progress.stage}
               </span>
-              <span className="font-mono tabular-nums text-sky-700 dark:text-cyan-400 font-medium shrink-0 ml-2">
-                {progress.percent}%
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="font-mono tabular-nums text-sky-700 dark:text-cyan-400 font-medium">
+                  {progress.percent}%
+                </span>
+                {onCancelProcess && (
+                  <button
+                    type="button"
+                    onClick={onCancelProcess}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-colors cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
             <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
               <div

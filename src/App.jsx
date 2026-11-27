@@ -9,6 +9,11 @@ import {
 } from './audio/processor.js';
 import { denoiseWithDeepFilterNet } from './audio/deepfilter.js';
 import {
+  DEFAULT_VOICE_CLEAN_OPTIONS,
+  VOICE_CLEAN_PRESETS,
+} from './audio/voiceCleanCore.js';
+import { runVoiceCleanInWorker } from './audio/voiceCleanClient.js';
+import {
   STORE_ORIGINALS,
   STORE_PROCESSED,
   clearStore,
@@ -53,6 +58,14 @@ export default function App() {
   const [activePresetId, setActivePresetId] = useState('podcast');
   const [options, setOptions] = useState(() => ({ ...PRESETS.podcast.options }));
 
+  // Stage 1 + optional Stage 2 Voice Clean state (runs off main thread in Web Worker)
+  const [voiceCleanOptions, setVoiceCleanOptions] = useState(() => ({
+    ...DEFAULT_VOICE_CLEAN_OPTIONS,
+  }));
+  const [abMatchLoudness, setAbMatchLoudness] = useState(true);
+  const [noiseRegion, setNoiseRegion] = useState(null);
+  const [isSelectingNoise, setIsSelectingNoise] = useState(false);
+
   const [isDecoding, setIsDecoding] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState({ percent: 0, stage: '' });
@@ -65,6 +78,7 @@ export default function App() {
   const [activeProcessedId, setActiveProcessedId] = useState(null);
 
   const fileInputRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   const {
     activeSource,
@@ -75,7 +89,11 @@ export default function App() {
     pause,
     seek,
     getAudioContext,
-  } = useABPlayer(originalBuffer, processedBuffer);
+  } = useABPlayer(originalBuffer, processedBuffer, {
+    enabled: abMatchLoudness,
+    originalLufs: originalAnalysis?.integratedLufs,
+    processedLufs: processedAnalysis?.integratedLufs,
+  });
 
   // Load persisted Original & Processed clips from separate IndexedDB stores on mount
   const refreshStorageLists = useCallback(async () => {
@@ -185,6 +203,13 @@ export default function App() {
           setProcessedAnalysis(null);
           setProcessingReport(null);
           setActiveProcessedId(null);
+          setNoiseRegion(null);
+          setIsSelectingNoise(false);
+          if (analysis.peakDb < -70) {
+            setErrorMessage(
+              'The recorded clip appears silent (peak below -70 dBFS). Check your microphone input level.'
+            );
+          }
 
           // Automatically persist raw mic recording into Original Storage
           await persistOriginalBuffer(recordedBuffer, analysis, recordingName);
@@ -309,6 +334,18 @@ export default function App() {
         setProcessingReport(null);
         setActiveOriginalId(null);
         setActiveProcessedId(null);
+        setNoiseRegion(null);
+        setIsSelectingNoise(false);
+
+        if (analysis.peakDb < -70) {
+          setErrorMessage(
+            `"${file.name}" appears silent (peak ${analysis.peakDb.toFixed(1)} dBFS). Voice Clean will handle it safely without crashing, though there is no speech to enhance.`
+          );
+        } else if (file.size > 20 * 1024 * 1024) {
+          setErrorMessage(
+            `Large file loaded (${(file.size / (1024 * 1024)).toFixed(1)} MB). Chunked Web Worker processing is enabled automatically to keep the interface responsive.`
+          );
+        }
       } catch (err) {
         console.error('Audio decode error:', err);
         setErrorMessage(
@@ -339,6 +376,8 @@ export default function App() {
         setProcessingReport(null);
         setActiveOriginalId(null);
         setActiveProcessedId(null);
+        setNoiseRegion(null);
+        setIsSelectingNoise(false);
       } catch (err) {
         console.error('Demo generation error:', err);
         setErrorMessage('Failed to initialize Web Audio API context for the demo clip.');
@@ -359,55 +398,178 @@ export default function App() {
     if (preset.recommendedEngine) {
       setProcessingEngine(preset.recommendedEngine);
     }
+    // If the user explicitly picks a mastering preset with target LUFS normalization,
+    // allow that LUFS target to apply instead of forcing input loudness match.
+    if (preset.options.normalizeEnabled) {
+      setVoiceCleanOptions((prev) => ({ ...prev, keepOriginalLoudness: false }));
+    }
   }, []);
 
   const handleChangeOption = useCallback((key, value) => {
     setActivePresetId(null);
     setOptions((prev) => ({ ...prev, [key]: value }));
+    // Picking an explicit LUFS target overrides "Keep original loudness"
+    if (key === 'targetLoudness' || key === 'normalizeMode') {
+      setVoiceCleanOptions((prev) => ({ ...prev, keepOriginalLoudness: false }));
+    }
   }, []);
 
   const handleChangeDfOption = useCallback((key, value) => {
     setDfOptions((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  const handleApplyVoiceCleanPreset = useCallback((presetId) => {
+    const p = VOICE_CLEAN_PRESETS[presetId];
+    if (!p) return;
+    setVoiceCleanOptions((prev) => ({
+      ...prev,
+      preset: p.id,
+      noiseReduction: p.noiseReduction,
+      reverbReduction: p.reverbReduction,
+      naturalBlend: p.naturalBlend,
+    }));
+  }, []);
+
+  const handleChangeVoiceCleanOption = useCallback((key, value) => {
+    setVoiceCleanOptions((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === 'noiseReduction' || key === 'reverbReduction' || key === 'naturalBlend') {
+        next.preset = 'custom';
+      }
+      return next;
+    });
+  }, []);
+
+  const handleCancelProcess = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+  }, []);
+
   const handleProcess = useCallback(async () => {
     if (!originalBuffer || isProcessing) return;
     setErrorMessage(null);
     setIsProcessing(true);
+    setIsSelectingNoise(false);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const { signal } = controller;
+
+    const vcActive = Boolean(voiceCleanOptions.enabled);
+    const keepInputLufs = Boolean(vcActive && voiceCleanOptions.keepOriginalLoudness);
+
     setProgress({
-      percent: 4,
-      stage:
-        processingEngine === 'deepfilternet'
+      percent: 3,
+      stage: vcActive
+        ? 'Starting Voice Clean Web Worker...'
+        : processingEngine === 'deepfilternet'
           ? 'Initializing DeepFilterNet3 neural engine...'
           : 'Preparing PCM channel buffers...',
     });
     pause();
 
     try {
-      let outBuffer;
+      let workingBuffer = originalBuffer;
+      let voiceCleanReport = null;
       let report = {};
       let storageTag = '';
 
-      if (processingEngine === 'deepfilternet') {
+      // STEP 0: Stage 1 (and optional Stage 2 AI denoise) Voice Clean in a Web Worker
+      // Runs BEFORE existing compressor / leveler / loudness mastering stages.
+      if (vcActive) {
+        const vcRes = await runVoiceCleanInWorker(
+          originalBuffer,
+          {
+            ...voiceCleanOptions,
+            noiseSampleRegion: noiseRegion,
+          },
+          {
+            signal,
+            onProgress: (prog) => {
+              const scale = processingEngine === 'deepfilternet' ? 0.55 : 0.68;
+              setProgress({
+                percent: Math.max(4, Math.round(prog.percent * scale)),
+                stage: prog.stage,
+              });
+            },
+          }
+        );
+
+        if (signal.aborted) {
+          const err = new Error('Processing cancelled.');
+          err.name = 'AbortError';
+          throw err;
+        }
+
+        workingBuffer = vcRes.audioBuffer;
+        voiceCleanReport = vcRes.report;
+      }
+
+      // Determine effective mastering options when chained after Voice Clean:
+      // - Avoid double-running Stage b. noise reduction since Voice Clean already denoised.
+      // - When "Keep original loudness" is ON, lock Stage e. target to input LUFS & -1.5 dBTP
+      //   so output stays within ±0.5 LU of original and is never louder than the original.
+      const effectiveOptions = vcActive
+        ? {
+            ...options,
+            noiseGateEnabled: false,
+            highPassEnabled: options.highPassEnabled && options.highPassFreq > 85,
+            ...(keepInputLufs && originalAnalysis?.integratedLufs > -65
+              ? {
+                  normalizeEnabled: true,
+                  normalizeMode: 'lufs',
+                  targetLoudness: originalAnalysis.integratedLufs,
+                  limiterCeilingDbtp: Math.min(options.limiterCeilingDbtp, -1.5),
+                }
+              : {}),
+          }
+        : options;
+
+      const hasPostStages =
+        effectiveOptions.highPassEnabled ||
+        effectiveOptions.noiseGateEnabled ||
+        effectiveOptions.voiceClarityEnabled ||
+        effectiveOptions.smoothToneEnabled ||
+        effectiveOptions.compressorEnabled ||
+        effectiveOptions.levelerEnabled ||
+        (effectiveOptions.normalizeEnabled && !keepInputLufs) ||
+        effectiveOptions.silenceTrimEnabled;
+
+      let outBuffer = workingBuffer;
+
+      if (processingEngine === 'deepfilternet' && !(vcActive && voiceCleanOptions.useAiDenoise)) {
         try {
           const dfRes = await denoiseWithDeepFilterNet(
-            originalBuffer,
+            workingBuffer,
             dfOptions,
             (prog) => {
-              const scaledPct = dfOptions.chainMastering
-                ? Math.round(prog.percent * 0.65)
-                : Math.min(96, prog.percent);
-              setProgress({ percent: scaledPct, stage: prog.stage });
+              const basePct = vcActive ? 55 : 0;
+              const span = dfOptions.chainMastering ? (vcActive ? 25 : 65) : (vcActive ? 41 : 96);
+              setProgress({
+                percent: Math.min(96, Math.round(basePct + (prog.percent / 100) * span)),
+                stage: prog.stage,
+              });
             }
           );
+
+          if (signal.aborted) {
+            const err = new Error('Processing cancelled.');
+            err.name = 'AbortError';
+            throw err;
+          }
 
           if (dfOptions.chainMastering) {
             const postRes = await processAudioBuffer(
               dfRes.audioBuffer,
-              { ...options, noiseGateEnabled: false, postNeuralCleanup: true },
+              { ...effectiveOptions, noiseGateEnabled: false, postNeuralCleanup: true },
               (prog) => {
-                const scaledPct = Math.round(65 + prog.percent * 0.33);
-                setProgress({ percent: scaledPct, stage: prog.stage });
+                const basePct = vcActive ? 80 : 65;
+                const span = vcActive ? 18 : 33;
+                setProgress({
+                  percent: Math.round(basePct + (prog.percent / 100) * span),
+                  stage: prog.stage,
+                });
               }
             );
             outBuffer = postRes.audioBuffer;
@@ -416,42 +578,68 @@ export default function App() {
               activePresetId && PRESETS[activePresetId]
                 ? PRESETS[activePresetId].label
                 : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
-            storageTag = `DeepFilterNet3 + ${presetPart}`;
+            storageTag = vcActive
+              ? `Voice Clean + DeepFilterNet3 + ${presetPart}`
+              : `DeepFilterNet3 + ${presetPart}`;
           } else {
             outBuffer = dfRes.audioBuffer;
             report = { deepFilterElapsedMs: dfRes.elapsedMs };
-            storageTag = `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`;
+            storageTag = vcActive
+              ? `Voice Clean + DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`
+              : `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`;
           }
         } catch (dfErr) {
+          if (dfErr?.name === 'AbortError') throw dfErr;
           console.warn('DeepFilterNet3 failed, falling back to Studio Spectral Wiener:', dfErr);
           setErrorMessage(
             `DeepFilterNet3 WASM could not run here (${dfErr?.message || 'WASM error'}) — automatically completed using Studio Spectral Wiener Denoiser + Mastering instead.`
           );
           const fallbackRes = await processAudioBuffer(
-            originalBuffer,
+            workingBuffer,
             {
-              ...options,
-              noiseGateEnabled: true,
+              ...effectiveOptions,
+              noiseGateEnabled: !vcActive,
               noiseMode: 'spectral',
-              noiseGateReductionDb: Math.max(18, Math.min(30, Math.round(dfOptions.attenuationLimit * 0.3))),
+              noiseGateReductionDb: Math.max(
+                18,
+                Math.min(30, Math.round(dfOptions.attenuationLimit * 0.3))
+              ),
             },
             (prog) => setProgress(prog)
           );
           outBuffer = fallbackRes.audioBuffer;
           report = fallbackRes.report;
-          storageTag = 'Spectral Wiener Fallback';
+          storageTag = vcActive ? 'Voice Clean + Spectral Fallback' : 'Spectral Wiener Fallback';
         }
-      } else {
-        const res = await processAudioBuffer(originalBuffer, options, (prog) =>
-          setProgress(prog)
-        );
+      } else if (!vcActive || hasPostStages) {
+        const res = await processAudioBuffer(workingBuffer, effectiveOptions, (prog) => {
+          const pct = vcActive ? Math.round(68 + prog.percent * 0.3) : prog.percent;
+          setProgress({ percent: pct, stage: prog.stage });
+        });
         outBuffer = res.audioBuffer;
         report = res.report;
-        const presetPart =
-          activePresetId && PRESETS[activePresetId]
+        const presetPart = keepInputLufs
+          ? 'Matched LUFS'
+          : activePresetId && PRESETS[activePresetId]
             ? PRESETS[activePresetId].label
             : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
-        storageTag = `Current DSP · ${presetPart}`;
+        storageTag = vcActive
+          ? `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset}) · ${presetPart}`
+          : `Current DSP · ${presetPart}`;
+      } else {
+        // Pure Voice Clean (no additional mastering stages active)
+        outBuffer = workingBuffer;
+        storageTag = `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset})`;
+      }
+
+      if (signal.aborted) {
+        const err = new Error('Processing cancelled.');
+        err.name = 'AbortError';
+        throw err;
+      }
+
+      if (voiceCleanReport) {
+        report = { ...report, voiceClean: voiceCleanReport };
       }
 
       const afterAnalysis = analyzeAudioBuffer(outBuffer);
@@ -469,20 +657,29 @@ export default function App() {
         setActiveProcessedId(null);
       }
     } catch (err) {
-      console.error('Processing error:', err);
-      setErrorMessage(
-        processingEngine === 'deepfilternet'
-          ? `DeepFilterNet3 processing failed (${err?.message || 'WASM error'}). Ensure WebAssembly SIMD is supported in your browser, or switch to Current DSP.`
-          : 'An unexpected error occurred while processing the audio buffer. Try a shorter clip or fewer simultaneous stages.'
-      );
+      if (err?.name === 'AbortError') {
+        setProgress({ percent: 0, stage: '' });
+        setErrorMessage('Processing cancelled. Your original audio buffer was not modified.');
+      } else {
+        console.error('Processing error:', err);
+        setErrorMessage(
+          processingEngine === 'deepfilternet'
+            ? `DeepFilterNet3 processing failed (${err?.message || 'WASM error'}). Ensure WebAssembly SIMD is supported in your browser, or switch to Current DSP.`
+            : `Audio processing failed (${err?.message || 'unexpected error'}). Try a shorter clip or fewer simultaneous stages.`
+        );
+      }
     } finally {
+      abortControllerRef.current = null;
       setIsProcessing(false);
     }
   }, [
     originalBuffer,
+    originalAnalysis,
     isProcessing,
     processingEngine,
     dfOptions,
+    voiceCleanOptions,
+    noiseRegion,
     options,
     pause,
     activePresetId,
@@ -736,11 +933,19 @@ export default function App() {
             onChangeEngine={setProcessingEngine}
             dfOptions={dfOptions}
             onChangeDfOption={handleChangeDfOption}
+            voiceCleanOptions={voiceCleanOptions}
+            onChangeVoiceCleanOption={handleChangeVoiceCleanOption}
+            onApplyVoiceCleanPreset={handleApplyVoiceCleanPreset}
+            noiseRegion={noiseRegion}
+            isSelectingNoise={isSelectingNoise}
+            onToggleSelectingNoise={setIsSelectingNoise}
+            onClearNoiseRegion={() => setNoiseRegion(null)}
             options={options}
             activePresetId={activePresetId}
             onApplyPreset={handleApplyPreset}
             onChangeOption={handleChangeOption}
             onProcess={handleProcess}
+            onCancelProcess={handleCancelProcess}
             isProcessing={isProcessing}
             progress={progress}
             hasAudio={Boolean(originalBuffer)}
@@ -757,6 +962,10 @@ export default function App() {
               currentTime={currentTime}
               hasOriginal={Boolean(originalBuffer)}
               hasProcessed={Boolean(processedBuffer)}
+              abMatchLoudness={abMatchLoudness}
+              onToggleAbMatchLoudness={setAbMatchLoudness}
+              originalLufs={originalAnalysis?.integratedLufs}
+              processedLufs={processedAnalysis?.integratedLufs}
               onTogglePlayTrack={togglePlayTrack}
               onSeek={seek}
               onDownloadOriginalWav={handleDownloadOriginalWav}
@@ -771,12 +980,18 @@ export default function App() {
               options={options}
               theme={theme}
               onSeek={seek}
+              noiseRegion={noiseRegion}
+              isSelectingNoise={isSelectingNoise}
+              onSelectNoiseRegion={setNoiseRegion}
+              onToggleSelectingNoise={setIsSelectingNoise}
             />
 
             <MetricsComparison
               originalAnalysis={originalAnalysis}
               processedAnalysis={processedAnalysis}
               options={options}
+              processingReport={processingReport}
+              voiceCleanOptions={voiceCleanOptions}
             />
 
             <StorageLibrary

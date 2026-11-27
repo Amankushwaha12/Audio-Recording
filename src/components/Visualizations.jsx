@@ -97,10 +97,19 @@ function WaveformCanvas({
   isActiveSource,
   isDark,
   onSeek,
+  noiseRegion,
+  isSelectingNoise,
+  onSelectNoiseRegion,
+  onToggleSelectingNoise,
 }) {
   const canvasRef = useRef(null);
   const resizeTick = useResizeTick(canvasRef);
   const [hoverTime, setHoverTime] = useState(null);
+  const [dragSelection, setDragSelection] = useState(null);
+  const isDraggingSelectionRef = useRef(false);
+  const dragStartSecRef = useRef(0);
+
+  const activeSelection = variant === 'original' ? dragSelection || noiseRegion : null;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -171,6 +180,19 @@ function WaveformCanvas({
 
     const usableHalfH = midY - 8;
 
+    // Draw selected noise-profile region behind waveform
+    if (activeSelection && analysis.duration > 0) {
+      const x1 = Math.max(0, Math.min(width, (activeSelection.startSec / analysis.duration) * width));
+      const x2 = Math.max(0, Math.min(width, (activeSelection.endSec / analysis.duration) * width));
+      const rx = Math.min(x1, x2);
+      const rw = Math.max(2, Math.abs(x2 - x1));
+      ctx.fillStyle = isDark ? 'rgba(245, 158, 11, 0.18)' : 'rgba(217, 119, 6, 0.16)';
+      ctx.fillRect(rx, 0, rw, height);
+      ctx.strokeStyle = isDark ? 'rgba(251, 191, 36, 0.85)' : 'rgba(180, 83, 9, 0.8)';
+      ctx.lineWidth = 1.25;
+      ctx.strokeRect(rx + 0.5, 0.5, Math.max(1, rw - 1), height - 1);
+    }
+
     // Draw peak envelope
     ctx.fillStyle = peakColor;
     for (let x = 0; x < width; x++) {
@@ -195,6 +217,21 @@ function WaveformCanvas({
     ctx.textAlign = 'left';
     ctx.fillText('0 dB', 6, 12);
     ctx.fillText('-6 dB', 6, Math.round(height * 0.25) - 3);
+
+    // Label selected noise region
+    if (activeSelection && analysis.duration > 0) {
+      const rx = Math.max(
+        4,
+        Math.min(width - 135, (Math.min(activeSelection.startSec, activeSelection.endSec) / analysis.duration) * width + 4)
+      );
+      ctx.fillStyle = isDark ? '#FCD34D' : '#92400E';
+      ctx.font = '10px "IBM Plex Mono", monospace';
+      ctx.fillText(
+        `Noise ${activeSelection.startSec.toFixed(2)}–${activeSelection.endSec.toFixed(2)}s`,
+        rx,
+        height - 6
+      );
+    }
 
     // Synchronized playhead
     if (analysis.duration > 0) {
@@ -229,26 +266,102 @@ function WaveformCanvas({
     }
 
     ctx.restore();
-  }, [analysis, variant, currentTime, isActiveSource, isDark, hoverTime, resizeTick]);
+  }, [analysis, variant, currentTime, isActiveSource, isDark, hoverTime, activeSelection, resizeTick]);
+
+  const timeFromPointerEvent = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    return ratio * (analysis?.duration || 0);
+  };
+
+  const handleMouseDown = (e) => {
+    if (!analysis?.duration) return;
+    if (variant === 'original' && (isSelectingNoise || e.shiftKey)) {
+      e.preventDefault();
+      const t = timeFromPointerEvent(e);
+      isDraggingSelectionRef.current = true;
+      dragStartSecRef.current = t;
+      setDragSelection({ startSec: t, endSec: t });
+    }
+  };
+
+  const handleMouseUp = (e) => {
+    if (!isDraggingSelectionRef.current) return;
+    isDraggingSelectionRef.current = false;
+    const endSec = timeFromPointerEvent(e);
+    const startSec = dragStartSecRef.current;
+    const minT = Math.min(startSec, endSec);
+    const maxT = Math.max(startSec, endSec);
+    setDragSelection(null);
+    if (maxT - minT >= 0.08) {
+      onSelectNoiseRegion?.({ startSec: minT, endSec: maxT });
+      if (isSelectingNoise) {
+        onToggleSelectingNoise?.(false);
+      }
+    }
+  };
 
   const handleClick = (e) => {
     if (!analysis?.duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    onSeek(ratio * analysis.duration);
+    if (variant === 'original' && (isSelectingNoise || e.shiftKey)) return;
+    onSeek(timeFromPointerEvent(e));
   };
 
   const handleMouseMove = (e) => {
     if (!analysis?.duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    setHoverTime(ratio * analysis.duration);
+    const t = timeFromPointerEvent(e);
+    setHoverTime(t);
+    if (isDraggingSelectionRef.current) {
+      setDragSelection({
+        startSec: Math.min(dragStartSecRef.current, t),
+        endSec: Math.max(dragStartSecRef.current, t),
+      });
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setHoverTime(null);
+    if (isDraggingSelectionRef.current && dragSelection) {
+      isDraggingSelectionRef.current = false;
+      if (dragSelection.endSec - dragSelection.startSec >= 0.08) {
+        onSelectNoiseRegion?.(dragSelection);
+        if (isSelectingNoise) onToggleSelectingNoise?.(false);
+      }
+      setDragSelection(null);
+    }
   };
 
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-medium text-slate-700 dark:text-slate-200">{title}</span>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-slate-700 dark:text-slate-200">{title}</span>
+          {variant === 'original' && analysis && onToggleSelectingNoise && (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => onToggleSelectingNoise(!isSelectingNoise)}
+                className={`px-1.5 py-0.5 text-[11px] font-medium rounded border transition-colors cursor-pointer ${
+                  isSelectingNoise
+                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+                title="Drag across a quiet noise-only pause on this waveform (or hold Shift + drag)"
+              >
+                {isSelectingNoise ? 'Drag on waveform...' : 'Select noise sample'}
+              </button>
+              {noiseRegion && (
+                <button
+                  type="button"
+                  onClick={() => onSelectNoiseRegion?.(null)}
+                  className="text-[11px] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 underline underline-offset-2 cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <span className="font-mono tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
           {hoverTime != null
             ? `Cursor: ${hoverTime.toFixed(2)} s`
@@ -259,10 +372,16 @@ function WaveformCanvas({
       </div>
       <canvas
         ref={canvasRef}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
         onClick={handleClick}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoverTime(null)}
-        className="w-full h-[136px] rounded border border-slate-200 dark:border-slate-800 cursor-crosshair block"
+        onMouseLeave={handleMouseLeave}
+        className={`w-full h-[136px] rounded border block select-none ${
+          variant === 'original' && isSelectingNoise
+            ? 'border-amber-500 dark:border-amber-400 cursor-col-resize'
+            : 'border-slate-200 dark:border-slate-800 cursor-crosshair'
+        }`}
         aria-label={`${title} waveform visualization`}
       />
     </div>
@@ -730,6 +849,10 @@ export default function Visualizations({
   options,
   theme,
   onSeek,
+  noiseRegion,
+  isSelectingNoise,
+  onSelectNoiseRegion,
+  onToggleSelectingNoise,
 }) {
   const isDark = theme === 'dark';
 
@@ -746,7 +869,7 @@ export default function Visualizations({
             Waveforms (Side by Side)
           </h2>
           <span className="text-xs text-slate-500 dark:text-slate-400">
-            Outer shade: peak amplitude · Solid core: RMS energy · Click anywhere to seek
+            Outer shade: peak amplitude · Solid core: RMS energy · Click to seek · Shift+drag Original for noise sample
           </span>
         </div>
 
@@ -759,6 +882,10 @@ export default function Visualizations({
             isActiveSource={activeSource === 'original'}
             isDark={isDark}
             onSeek={onSeek}
+            noiseRegion={noiseRegion}
+            isSelectingNoise={isSelectingNoise}
+            onSelectNoiseRegion={onSelectNoiseRegion}
+            onToggleSelectingNoise={onToggleSelectingNoise}
           />
           <WaveformCanvas
             title="Processed (After)"

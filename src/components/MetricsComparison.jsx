@@ -28,6 +28,8 @@ export default function MetricsComparison({
   originalAnalysis,
   processedAnalysis,
   options,
+  processingReport,
+  voiceCleanOptions,
 }) {
   if (!originalAnalysis) {
     return (
@@ -40,7 +42,8 @@ export default function MetricsComparison({
         </h2>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
           Upload an audio file or load the built-in demo clip to inspect duration, sample rate,
-          peak/RMS levels, ITU-R BS.1770 LUFS loudness, silence percentage, and clipping samples.
+          peak/RMS levels, ITU-R BS.1770 LUFS loudness, estimated noise floor, reverb, silence
+          percentage, and clipping samples.
         </p>
       </section>
     );
@@ -48,6 +51,31 @@ export default function MetricsComparison({
 
   const orig = originalAnalysis;
   const proc = processedAnalysis;
+  const vc = processingReport?.voiceClean || null;
+  const isLoudnessMatchedMode = Boolean(
+    voiceCleanOptions?.enabled && voiceCleanOptions?.keepOriginalLoudness
+  );
+
+  const lufsStatus = (() => {
+    if (!proc) return null;
+    if (isLoudnessMatchedMode && orig.integratedLufs > -65) {
+      const diff = Math.abs(proc.integratedLufs - orig.integratedLufs);
+      return diff <= 0.55
+        ? { text: 'Matched (±0.5 LU)', tone: 'good' }
+        : { text: `Offset ${diff.toFixed(1)} LU`, tone: 'warn' };
+    }
+    if (options.normalizeEnabled && options.normalizeMode === 'lufs') {
+      return Math.abs(proc.integratedLufs - options.targetLoudness) <= 1.2
+        ? { text: 'On target', tone: 'good' }
+        : { text: 'Limited', tone: 'warn' };
+    }
+    return null;
+  })();
+
+  const effectiveCeilingDbtp =
+    voiceCleanOptions?.enabled && !options.normalizeEnabled
+      ? -1.5
+      : options.limiterCeilingDbtp;
 
   const rows = [
     {
@@ -70,16 +98,13 @@ export default function MetricsComparison({
     },
     {
       label: 'Integrated loudness',
-      note: 'ITU-R BS.1770-4 K-weighted & gated',
+      note: isLoudnessMatchedMode
+        ? 'ITU-R BS.1770-4 · Voice Clean loudness match (±0.5 LU)'
+        : 'ITU-R BS.1770-4 K-weighted & gated',
       before: `${fmtDb(orig.integratedLufs)} LUFS`,
       after: proc ? `${fmtDb(proc.integratedLufs)} LUFS` : 'Pending',
       delta: proc ? fmtDelta(orig.integratedLufs, proc.integratedLufs, ' LU', 1) : '—',
-      status:
-        proc && options.normalizeEnabled && options.normalizeMode === 'lufs'
-          ? Math.abs(proc.integratedLufs - options.targetLoudness) <= 1.2
-            ? { text: 'On target', tone: 'good' }
-            : { text: 'Limited', tone: 'warn' }
-          : null,
+      status: lufsStatus,
     },
     {
       label: 'RMS level',
@@ -88,7 +113,7 @@ export default function MetricsComparison({
       after: proc ? `${fmtDb(proc.rmsDb)} dBFS` : 'Pending',
       delta: proc ? fmtDelta(orig.rmsDb, proc.rmsDb, ' dB', 1) : '—',
       status:
-        proc && options.normalizeEnabled && options.normalizeMode === 'rms'
+        proc && !isLoudnessMatchedMode && options.normalizeEnabled && options.normalizeMode === 'rms'
           ? Math.abs(proc.rmsDb - options.targetLoudness) <= 1.2
             ? { text: 'On target', tone: 'good' }
             : { text: 'Limited', tone: 'warn' }
@@ -103,13 +128,57 @@ export default function MetricsComparison({
         : 'Pending',
       delta: proc ? fmtDelta(orig.truePeakDbtp, proc.truePeakDbtp, ' dB', 1) : '—',
       status: proc
-        ? proc.truePeakDbtp <= options.limiterCeilingDbtp + 0.15
+        ? proc.truePeakDbtp <= effectiveCeilingDbtp + 0.15
           ? { text: 'Safe', tone: 'good' }
           : { text: 'Hot peak', tone: 'warn' }
         : orig.truePeakDbtp > -0.2
           ? { text: 'Near 0 dB', tone: 'warn' }
           : null,
     },
+    {
+      label: 'Estimated noise floor',
+      note: 'Quietest ~10% active background frames',
+      before: `${fmtDb(orig.estimatedNoiseFloorDb)} dBFS`,
+      after: proc ? `${fmtDb(proc.estimatedNoiseFloorDb)} dBFS` : 'Pending',
+      delta: proc
+        ? fmtDelta(orig.estimatedNoiseFloorDb, proc.estimatedNoiseFloorDb, ' dB', 1)
+        : '—',
+      status: proc
+        ? proc.estimatedNoiseFloorDb <= orig.estimatedNoiseFloorDb - 2.0
+          ? { text: 'Cleaner', tone: 'good' }
+          : null
+        : null,
+    },
+    ...(vc
+      ? [
+          {
+            label: 'Estimated reverb (RT60)',
+            note: vc.reverbSkipped
+              ? 'Dry recording detected — reverb step auto-skipped'
+              : 'Late-decay room tail estimate',
+            before:
+              vc.estimatedRt60Sec != null
+                ? `${vc.estimatedRt60Sec.toFixed(2)} s`
+                : 'Dry / N/A',
+            after: vc.reverbSkipped
+              ? 'Skipped (already dry)'
+              : vc.outputRt60Sec != null
+                ? `${vc.outputRt60Sec.toFixed(2)} s`
+                : 'Dry / N/A',
+            delta:
+              !vc.reverbSkipped && vc.estimatedRt60Sec != null && vc.outputRt60Sec != null
+                ? fmtDelta(vc.estimatedRt60Sec, vc.outputRt60Sec, ' s', 2)
+                : '—',
+            status: vc.reverbSkipped
+              ? { text: 'Already dry', tone: 'good' }
+              : vc.estimatedRt60Sec != null &&
+                  vc.outputRt60Sec != null &&
+                  vc.outputRt60Sec < vc.estimatedRt60Sec - 0.03
+                ? { text: 'Tighter', tone: 'good' }
+                : null,
+          },
+        ]
+      : []),
     {
       label: 'Silence percentage',
       note: `50 ms frames below ${SILENCE_THRESHOLD_DB} dBFS`,
@@ -219,6 +288,30 @@ export default function MetricsComparison({
           </tbody>
         </table>
       </div>
+
+      {/* Voice Clean Report & Warnings Footer */}
+      {vc && (
+        <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#0D1320] space-y-2 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-semibold text-slate-800 dark:text-slate-200">
+              Voice Clean Report
+            </span>
+            <span className="font-mono tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
+              Denoiser: {vc.usedAiDenoise ? 'AI (DeepFilterNet3 WASM)' : 'Spectral STFT (2048-pt)'}{' '}
+              · Profile: {vc.noiseSource === 'selected-region' ? 'Selected region' : 'Auto quietest 10%'}
+            </span>
+          </div>
+          {vc.warnings && vc.warnings.length > 0 && (
+            <ul className="space-y-1 text-amber-800 dark:text-amber-300">
+              {vc.warnings.map((w, idx) => (
+                <li key={idx} className="leading-snug">
+                  • {w}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </section>
   );
 }

@@ -17,6 +17,10 @@ export default function TransportDeck({
   currentTime,
   hasOriginal,
   hasProcessed,
+  abMatchLoudness,
+  onToggleAbMatchLoudness,
+  originalLufs,
+  processedLufs,
   onTogglePlayTrack,
   onSeek,
   onDownloadOriginalWav,
@@ -34,6 +38,26 @@ export default function TransportDeck({
 
   const isPlayingOriginal = isPlaying && activeSource === 'original';
   const isPlayingProcessed = isPlaying && activeSource === 'processed';
+
+  const hasValidLufs =
+    hasOriginal &&
+    hasProcessed &&
+    Number.isFinite(originalLufs) &&
+    Number.isFinite(processedLufs) &&
+    originalLufs > -65 &&
+    processedLufs > -65;
+
+  const lufsDiff = hasValidLufs ? processedLufs - originalLufs : 0;
+  let matchReadout = '';
+  if (hasValidLufs && abMatchLoudness) {
+    if (Math.abs(lufsDiff) < 0.15) {
+      matchReadout = '0.0 LU diff';
+    } else if (lufsDiff > 0) {
+      matchReadout = `B trimmed -${lufsDiff.toFixed(1)} dB`;
+    } else {
+      matchReadout = `A trimmed -${Math.abs(lufsDiff).toFixed(1)} dB`;
+    }
+  }
 
   return (
     <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-lg p-4 space-y-3.5">
@@ -76,9 +100,23 @@ export default function TransportDeck({
             {isPlayingProcessed ? 'Pause Processed (B)' : 'Play Processed (B)'}
           </button>
 
-          <span className="hidden sm:inline text-xs text-slate-500 dark:text-slate-400 ml-1">
-            Switch mid-playback to A/B compare · Keys: Space / A / B
-          </span>
+          <label
+            className="inline-flex items-center gap-1.5 ml-1 text-xs text-slate-600 dark:text-slate-300 cursor-pointer select-none"
+            title="Attenuates the louder track during A/B playback so loudness differences never bias your ears"
+          >
+            <input
+              type="checkbox"
+              checked={Boolean(abMatchLoudness)}
+              onChange={(e) => onToggleAbMatchLoudness?.(e.target.checked)}
+              className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 accent-sky-600 dark:accent-cyan-500 cursor-pointer"
+            />
+            <span>Matched-loudness A/B</span>
+            {matchReadout && (
+              <span className="font-mono tabular-nums text-[11px] text-sky-700 dark:text-cyan-400">
+                ({matchReadout})
+              </span>
+            )}
+          </label>
         </div>
 
         {/* Download Original & Processed WAV */}
@@ -130,14 +168,16 @@ export default function TransportDeck({
         </span>
       </div>
 
-      {durationTrimmed && (
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          Note: Silence trimming shortened the processed track from{' '}
-          <span className="font-mono tabular-nums">{originalDuration.toFixed(2)} s</span> to{' '}
-          <span className="font-mono tabular-nums">{processedDuration.toFixed(2)} s</span>.
-          Shared seek stays synchronized up to the processed end time.
-        </p>
-      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+        <span>Switch mid-playback to A/B compare · Keys: Space / A / B</span>
+        {durationTrimmed && (
+          <span>
+            Silence trimming shortened track from{' '}
+            <span className="font-mono tabular-nums">{originalDuration.toFixed(2)} s</span> to{' '}
+            <span className="font-mono tabular-nums">{processedDuration.toFixed(2)} s</span>
+          </span>
+        )}
+      </div>
     </div>
   );
 }

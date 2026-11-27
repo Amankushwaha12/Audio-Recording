@@ -8,8 +8,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { dbToLinear } from '../audio/analyzer.js';
 
-export function useABPlayer(originalBuffer, processedBuffer) {
+export function useABPlayer(originalBuffer, processedBuffer, loudnessMatch = null) {
   const [activeSource, setActiveSource] = useState('original'); // 'original' | 'processed'
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -25,6 +26,46 @@ export function useABPlayer(originalBuffer, processedBuffer) {
   const activeSourceRef = useRef('original');
   const isPlayingRef = useRef(false);
   const currentTimeRef = useRef(0);
+
+  // Compute safe attenuation-only loudness-match gain for A/B comparison
+  // (attenuating the louder track prevents clipping and eliminates "louder sounds better" bias)
+  const getTargetGainForSource = useCallback(
+    (which) => {
+      if (
+        !loudnessMatch?.enabled ||
+        !Number.isFinite(loudnessMatch.originalLufs) ||
+        !Number.isFinite(loudnessMatch.processedLufs) ||
+        loudnessMatch.originalLufs <= -65 ||
+        loudnessMatch.processedLufs <= -65
+      ) {
+        return 1.0;
+      }
+      const deltaLu = loudnessMatch.processedLufs - loudnessMatch.originalLufs;
+      if (Math.abs(deltaLu) < 0.1) return 1.0;
+      // Attenuate whichever source is louder so both play at the quieter track's LUFS
+      if (which === 'processed' && deltaLu > 0) {
+        return dbToLinear(-Math.min(24, deltaLu));
+      }
+      if (which === 'original' && deltaLu < 0) {
+        return dbToLinear(-Math.min(24, -deltaLu));
+      }
+      return 1.0;
+    },
+    [loudnessMatch?.enabled, loudnessMatch?.originalLufs, loudnessMatch?.processedLufs]
+  );
+
+  // Update active GainNode smoothly if user toggles loudness-matched A/B mid-playback
+  useEffect(() => {
+    const gain = gainNodeRef.current;
+    const ctx = audioCtxRef.current;
+    if (gain && ctx && isPlayingRef.current) {
+      const target = getTargetGainForSource(activeSourceRef.current);
+      const now = ctx.currentTime;
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(gain.gain.value, now);
+      gain.gain.linearRampToValueAtTime(target, now + 0.02);
+    }
+  }, [getTargetGainForSource]);
 
   const getAudioContext = useCallback(() => {
     if (!audioCtxRef.current) {
@@ -91,10 +132,11 @@ export function useABPlayer(originalBuffer, processedBuffer) {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
 
+      const targetGain = getTargetGainForSource(which);
       const gain = ctx.createGain();
       const now = ctx.currentTime;
       gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.linearRampToValueAtTime(1.0, now + 0.012);
+      gain.gain.linearRampToValueAtTime(targetGain, now + 0.012);
 
       source.connect(gain);
       gain.connect(ctx.destination);
@@ -133,7 +175,7 @@ export function useABPlayer(originalBuffer, processedBuffer) {
       };
       rafRef.current = requestAnimationFrame(tick);
     },
-    [originalBuffer, processedBuffer, getAudioContext, stopNodeOnly]
+    [originalBuffer, processedBuffer, getAudioContext, stopNodeOnly, getTargetGainForSource]
   );
 
   const pause = useCallback(() => {
