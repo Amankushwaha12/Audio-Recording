@@ -12,7 +12,15 @@ import {
   DEFAULT_VOICE_CLEAN_OPTIONS,
   VOICE_CLEAN_PRESETS,
 } from './audio/voiceCleanCore.js';
-import { runVoiceCleanInWorker } from './audio/voiceCleanClient.js';
+import { DEFAULT_VOICE_ISOLATION_OPTIONS } from './audio/voiceIsolation.js';
+import {
+  runVoiceCleanInWorker,
+  runVoiceIsolationInWorker,
+} from './audio/voiceCleanClient.js';
+import {
+  DEFAULT_DIFFUSION_DEREVERB_OPTIONS,
+  runDiffusionDereverb,
+} from './audio/diffusionDereverbClient.js';
 import {
   STORE_ORIGINALS,
   STORE_PROCESSED,
@@ -58,12 +66,15 @@ export default function App() {
   const [processedAnalysis, setProcessedAnalysis] = useState(null);
   const [processingReport, setProcessingReport] = useState(null);
 
-  const [processingEngine, setProcessingEngine] = useState('dsp'); // 'dsp' | 'deepfilternet'
+  const [processingEngine, setProcessingEngine] = useState('dsp'); // 'dsp' | 'deepfilternet' | 'diffusion-dereverb'
   const [dfOptions, setDfOptions] = useState({
     attenuationLimit: 48,
     postFilterBeta: 0.0,
     chainMastering: true,
   });
+  const [diffusionDereverbOptions, setDiffusionDereverbOptions] = useState(() => ({
+    ...DEFAULT_DIFFUSION_DEREVERB_OPTIONS,
+  }));
 
   const [activePresetId, setActivePresetId] = useState('podcast');
   const [options, setOptions] = useState(() => ({ ...PRESETS.podcast.options }));
@@ -71,6 +82,10 @@ export default function App() {
   // Stage 1 + optional Stage 2 Voice Clean state (runs off main thread in Web Worker)
   const [voiceCleanOptions, setVoiceCleanOptions] = useState(() => ({
     ...DEFAULT_VOICE_CLEAN_OPTIONS,
+  }));
+  // Dedicated Foreground Voice Isolation state (runs off main thread in Web Worker)
+  const [voiceIsolationOptions, setVoiceIsolationOptions] = useState(() => ({
+    ...DEFAULT_VOICE_ISOLATION_OPTIONS,
   }));
   const [abMatchLoudness, setAbMatchLoudness] = useState(true);
   const [noiseRegion, setNoiseRegion] = useState(null);
@@ -418,8 +433,49 @@ export default function App() {
     if (preset.recommendedEngine) {
       setProcessingEngine(preset.recommendedEngine);
     }
-    if (preset.options.normalizeEnabled) {
-      setVoiceCleanOptions((prev) => ({ ...prev, keepOriginalLoudness: false }));
+    if (presetId === 'voiceIsolation' && preset.voiceIsolationOptions) {
+      setVoiceIsolationOptions({
+        ...DEFAULT_VOICE_ISOLATION_OPTIONS,
+        ...preset.voiceIsolationOptions,
+        enabled: true,
+      });
+      setVoiceCleanOptions((prev) => ({
+        ...prev,
+        enabled: false,
+        preset: 'voiceIsolation',
+        adaptiveDenoise: false,
+        humDetect: true,
+        keepOriginalLoudness: false,
+      }));
+    } else if (presetId === 'voiceTarget') {
+      const vt = VOICE_CLEAN_PRESETS.voiceTarget;
+      setVoiceIsolationOptions((prev) => ({ ...prev, enabled: false }));
+      setVoiceCleanOptions((prev) => ({
+        ...prev,
+        enabled: true,
+        preset: 'voiceTarget',
+        noiseReduction: vt.noiseReduction,
+        reverbReduction: vt.reverbReduction,
+        naturalBlend: vt.naturalBlend,
+        adaptiveDenoise: true,
+        humDetect: true,
+        keepOriginalLoudness: false,
+      }));
+    } else {
+      setVoiceIsolationOptions((prev) => ({ ...prev, enabled: false }));
+      if (preset.options.normalizeEnabled) {
+        setVoiceCleanOptions((prev) => ({
+          ...prev,
+          enabled: prev.preset === 'voiceIsolation' ? true : prev.enabled,
+          preset:
+            prev.preset === 'voiceTarget' || prev.preset === 'voiceIsolation'
+              ? 'clear'
+              : prev.preset,
+          adaptiveDenoise: false,
+          humDetect: false,
+          keepOriginalLoudness: false,
+        }));
+      }
     }
   }, []);
 
@@ -435,27 +491,82 @@ export default function App() {
     setDfOptions((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  const handleApplyVoiceCleanPreset = useCallback((presetId) => {
-    const p = VOICE_CLEAN_PRESETS[presetId];
-    if (!p) return;
-    setVoiceCleanOptions((prev) => ({
-      ...prev,
-      enabled: true,
-      preset: p.id,
-      noiseReduction: p.noiseReduction,
-      reverbReduction: p.reverbReduction,
-      naturalBlend: p.naturalBlend,
-    }));
+  const handleChangeDiffusionDereverbOption = useCallback((key, value) => {
+    setDiffusionDereverbOptions((prev) => ({ ...prev, [key]: value }));
   }, []);
+
+  const handleChangeVoiceIsolationOption = useCallback((key, value) => {
+    setVoiceIsolationOptions((prev) => ({ ...prev, [key]: value }));
+    if (key === 'enabled' && value === true) {
+      setVoiceCleanOptions((prev) => ({ ...prev, enabled: false }));
+    }
+  }, []);
+
+  const handleApplyVoiceCleanPreset = useCallback(
+    (presetId) => {
+      const p = VOICE_CLEAN_PRESETS[presetId];
+      if (!p) return;
+      if (presetId === 'voiceIsolation' && PRESETS.voiceIsolation) {
+        setVoiceIsolationOptions({
+          ...DEFAULT_VOICE_ISOLATION_OPTIONS,
+          ...PRESETS.voiceIsolation.voiceIsolationOptions,
+          enabled: true,
+        });
+        setVoiceCleanOptions((prev) => ({
+          ...prev,
+          enabled: false,
+          preset: 'voiceIsolation',
+          noiseReduction: p.noiseReduction,
+          reverbReduction: p.reverbReduction,
+          naturalBlend: p.naturalBlend,
+          adaptiveDenoise: false,
+          humDetect: true,
+          keepOriginalLoudness: false,
+        }));
+        setActivePresetId('voiceIsolation');
+        setOptions({ ...PRESETS.voiceIsolation.options });
+        setProcessingEngine('dsp');
+        return;
+      }
+
+      setVoiceIsolationOptions((prev) => ({ ...prev, enabled: false }));
+      setVoiceCleanOptions((prev) => ({
+        ...prev,
+        enabled: true,
+        preset: p.id,
+        noiseReduction: p.noiseReduction,
+        reverbReduction: p.reverbReduction,
+        naturalBlend: p.naturalBlend,
+        adaptiveDenoise: Boolean(p.adaptiveDenoise),
+        humDetect: Boolean(p.humDetect),
+        keepOriginalLoudness: p.keepOriginalLoudness !== false,
+      }));
+      if (presetId === 'voiceTarget' && PRESETS.voiceTarget) {
+        setActivePresetId('voiceTarget');
+        setOptions({ ...PRESETS.voiceTarget.options });
+        setProcessingEngine('dsp');
+      } else if (activePresetId === 'voiceTarget' || activePresetId === 'voiceIsolation') {
+        setActivePresetId('podcast');
+        setOptions({ ...PRESETS.podcast.options });
+      }
+    },
+    [activePresetId]
+  );
 
   const handleChangeVoiceCleanOption = useCallback((key, value) => {
     setVoiceCleanOptions((prev) => {
       const next = { ...prev, [key]: value };
       if (key === 'noiseReduction' || key === 'reverbReduction' || key === 'naturalBlend') {
         next.preset = 'custom';
+        if (key === 'noiseReduction') {
+          next.adaptiveDenoise = false;
+        }
       }
       return next;
     });
+    if (key === 'enabled' && value === true) {
+      setVoiceIsolationOptions((prev) => ({ ...prev, enabled: false }));
+    }
   }, []);
 
   const handleCancelProcess = useCallback(() => {
@@ -475,41 +586,103 @@ export default function App() {
       abortControllerRef.current = controller;
       const { signal } = controller;
 
-      const vcActive = isSimpleMode ? true : Boolean(voiceCleanOptions.enabled);
-      const keepInputLufs = Boolean(vcActive && voiceCleanOptions.keepOriginalLoudness);
+      const isDiffusionEngine = !isSimpleMode && processingEngine === 'diffusion-dereverb';
+      const isVoiceIsolationSimple = isSimpleMode && voiceCleanOptions.preset === 'voiceIsolation';
+      const isVoiceTargetSimple = isSimpleMode && voiceCleanOptions.preset === 'voiceTarget';
+      const runIsolationWorker =
+        !isDiffusionEngine &&
+        (isVoiceIsolationSimple || (!isSimpleMode && Boolean(voiceIsolationOptions.enabled)));
+      const vcActive =
+        !isDiffusionEngine &&
+        !runIsolationWorker &&
+        (isSimpleMode ? true : Boolean(voiceCleanOptions.enabled));
+      const keepInputLufs = Boolean(
+        (vcActive || isVoiceIsolationSimple) && voiceCleanOptions.keepOriginalLoudness
+      );
 
       setProgress({
         percent: 3,
-        stage: vcActive
-          ? 'Starting Voice Clean Web Worker...'
-          : processingEngine === 'deepfilternet'
-            ? 'Initializing DeepFilterNet3 neural engine...'
-            : 'Preparing PCM channel buffers...',
+        stage: isDiffusionEngine
+          ? 'Preparing direct upload to Diffusion Dereverb FastAPI server...'
+          : runIsolationWorker
+            ? 'Starting Voice Isolation Web Worker...'
+            : vcActive
+              ? isVoiceTargetSimple
+                ? 'Starting Voice Target Web Worker...'
+                : 'Starting Voice Clean Web Worker...'
+              : processingEngine === 'deepfilternet'
+                ? 'Initializing DeepFilterNet3 neural engine...'
+                : 'Preparing PCM channel buffers...',
       });
       pause();
 
       try {
         let workingBuffer = originalBuffer;
         let voiceCleanReport = null;
+        let voiceIsolationReport = null;
         let report = {};
         let storageTag = '';
 
-        // STEP 0: Stage 1 (and optional Stage 2 AI denoise) Voice Clean in Web Worker
+        // STEP 0A: Dedicated Foreground Voice Isolation in Web Worker
+        if (runIsolationWorker) {
+          const isoRes = await runVoiceIsolationInWorker(
+            originalBuffer,
+            {
+              ...voiceIsolationOptions,
+              enabled: true,
+              useAiBoost: isSimpleMode
+                ? Boolean(voiceCleanOptions.useAiDenoise || voiceIsolationOptions.useAiBoost)
+                : Boolean(voiceIsolationOptions.useAiBoost),
+              keepOriginalLoudness: isSimpleMode && keepInputLufs,
+              limiterCeilingDbtp: options.limiterCeilingDbtp ?? -1.0,
+              noiseSampleRegion: noiseRegion,
+            },
+            {
+              signal,
+              onProgress: (prog) => {
+                const scale = isSimpleMode ? 0.68 : 0.66;
+                setProgress({
+                  percent: Math.max(4, Math.round(prog.percent * scale)),
+                  stage: prog.stage,
+                });
+              },
+            }
+          );
+
+          if (signal.aborted) {
+            const err = new Error('Processing cancelled.');
+            err.name = 'AbortError';
+            throw err;
+          }
+
+          workingBuffer = isoRes.audioBuffer;
+          voiceIsolationReport = isoRes.report;
+        }
+
+        // STEP 0B: Stage 1 (and optional Stage 2 AI denoise) Voice Clean in Web Worker
         if (vcActive) {
+          const skipWorkerToneShaping =
+            isVoiceTargetSimple || (!isSimpleMode && Boolean(options.voiceClarityEnabled));
           const vcRes = await runVoiceCleanInWorker(
             originalBuffer,
             {
               ...voiceCleanOptions,
               enabled: true,
+              skipToneShaping: skipWorkerToneShaping,
+              limiterCeilingDbtp: isVoiceTargetSimple
+                ? options.limiterCeilingDbtp ?? -1.0
+                : -1.5,
               noiseSampleRegion: noiseRegion,
             },
             {
               signal,
               onProgress: (prog) => {
                 const scale = isSimpleMode
-                  ? options.smoothToneEnabled
-                    ? 0.82
-                    : 0.96
+                  ? isVoiceTargetSimple
+                    ? 0.62
+                    : options.smoothToneEnabled
+                      ? 0.82
+                      : 0.96
                   : processingEngine === 'deepfilternet'
                     ? 0.55
                     : 0.68;
@@ -534,18 +707,82 @@ export default function App() {
         let outBuffer = workingBuffer;
 
         if (isSimpleMode) {
-          // Simple mode: clean Voice Clean + optional Smooth Tone + loudness match / -1.5 dBTP protection
-          if (options.smoothToneEnabled) {
+          if (isVoiceIsolationSimple) {
+            // Simple Voice Isolation polish: gentle ±3 dB clarity EQ + gentle leveler + -16 LUFS (or matched input LUFS)
+            const isoPost = await processAudioBuffer(
+              workingBuffer,
+              {
+                ...PRESETS.voiceIsolation.options,
+                highPassEnabled: false,
+                humDetectEnabled: false,
+                noiseGateEnabled: false,
+                dryMix: 0,
+                smoothToneEnabled: Boolean(options.smoothToneEnabled),
+                smoothToneAmount: options.smoothToneAmount ?? 0.35,
+                normalizeEnabled: true,
+                normalizeMode: 'lufs',
+                targetLoudness:
+                  keepInputLufs && originalAnalysis?.integratedLufs > -65
+                    ? originalAnalysis.integratedLufs
+                    : PRESETS.voiceIsolation.options.targetLoudness,
+                limiterCeilingDbtp: options.limiterCeilingDbtp ?? -1.0,
+              },
+              (prog) => {
+                setProgress({
+                  percent: Math.round(68 + prog.percent * 0.3),
+                  stage: prog.stage,
+                });
+              }
+            );
+            outBuffer = isoPost.audioBuffer;
+            report = isoPost.report;
+            storageTag = `Simple · Voice Isolation (${voiceIsolationOptions.isolationStrength}%${
+              voiceIsolationReport?.usedAiBoost ? ' + AI' : ''
+            })`;
+          } else if (isVoiceTargetSimple) {
+            // Voice Target Simple pipeline: ±3 dB Auto-EQ + gentle ±6 dB leveler + -16 LUFS (±0.5 LU) + true-peak limiter
+            const vtPost = await processAudioBuffer(
+              workingBuffer,
+              {
+                ...PRESETS.voiceTarget.options,
+                highPassEnabled: false,
+                humDetectEnabled: false,
+                noiseGateEnabled: false,
+                dryMix: 0,
+                smoothToneEnabled: Boolean(options.smoothToneEnabled),
+                smoothToneAmount: options.smoothToneAmount ?? 0.45,
+                normalizeEnabled: true,
+                normalizeMode: 'lufs',
+                targetLoudness:
+                  keepInputLufs && originalAnalysis?.integratedLufs > -65
+                    ? originalAnalysis.integratedLufs
+                    : PRESETS.voiceTarget.options.targetLoudness,
+                limiterCeilingDbtp: options.limiterCeilingDbtp ?? -1.0,
+              },
+              (prog) => {
+                setProgress({
+                  percent: Math.round(62 + prog.percent * 0.36),
+                  stage: prog.stage,
+                });
+              }
+            );
+            outBuffer = vtPost.audioBuffer;
+            report = vtPost.report;
+            storageTag = `Simple · Voice Target (${keepInputLufs ? 'Matched LUFS' : '-16 LUFS'}, ${(options.limiterCeilingDbtp ?? -1.0).toFixed(1)} dBTP)`;
+          } else if (options.smoothToneEnabled) {
+            // Simple mode: clean Voice Clean + optional Smooth Tone + loudness match / -1.5 dBTP protection
             const simplePost = await processAudioBuffer(
               workingBuffer,
               {
                 ...options,
                 highPassEnabled: false,
+                humDetectEnabled: false,
                 noiseGateEnabled: false,
                 voiceClarityEnabled: false,
                 smoothToneEnabled: true,
                 compressorEnabled: false,
                 levelerEnabled: false,
+                dryMix: 0,
                 silenceTrimEnabled: false,
                 normalizeEnabled: true,
                 normalizeMode: 'lufs',
@@ -564,15 +801,25 @@ export default function App() {
             );
             outBuffer = simplePost.audioBuffer;
             report = simplePost.report;
+            storageTag = `Simple · Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset})`;
+          } else {
+            storageTag = `Simple · Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset})`;
           }
-          storageTag = `Simple · Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset})`;
         } else {
-          // Advanced mode: full configurable mastering rack after Voice Clean
-          const effectiveOptions = vcActive
+          // Advanced mode: full configurable mastering rack after Voice Isolation or Voice Clean
+          const preWorkerActive = runIsolationWorker || vcActive;
+          const effectiveOptions = preWorkerActive
             ? {
                 ...options,
+                humDetectEnabled:
+                  options.humDetectEnabled &&
+                  !(runIsolationWorker && voiceIsolationOptions.vocalBandFocus) &&
+                  !(vcActive && voiceCleanOptions.humDetect),
                 noiseGateEnabled: false,
-                highPassEnabled: options.highPassEnabled && options.highPassFreq > 85,
+                dryMix: 0, // Worker already blended natural dry voice
+                highPassEnabled:
+                  options.highPassEnabled &&
+                  options.highPassFreq > (runIsolationWorker ? 90 : 85),
                 ...(keepInputLufs && originalAnalysis?.integratedLufs > -65
                   ? {
                       normalizeEnabled: true,
@@ -586,6 +833,7 @@ export default function App() {
 
           const hasPostStages =
             effectiveOptions.highPassEnabled ||
+            effectiveOptions.humDetectEnabled ||
             effectiveOptions.noiseGateEnabled ||
             effectiveOptions.voiceClarityEnabled ||
             effectiveOptions.smoothToneEnabled ||
@@ -594,15 +842,57 @@ export default function App() {
             (effectiveOptions.normalizeEnabled && !keepInputLufs) ||
             effectiveOptions.silenceTrimEnabled;
 
-          if (processingEngine === 'deepfilternet' && !(vcActive && voiceCleanOptions.useAiDenoise)) {
+          const skipExternalDf =
+            (vcActive && voiceCleanOptions.useAiDenoise) ||
+            (runIsolationWorker && voiceIsolationOptions.useAiBoost);
+
+          if (isDiffusionEngine) {
+            const ddRes = await runDiffusionDereverb(workingBuffer, diffusionDereverbOptions, {
+              audioCtx: getAudioContext(),
+              signal,
+              onProgress: (prog) => {
+                const span = diffusionDereverbOptions.chainMastering ? 0.72 : 0.96;
+                setProgress({
+                  percent: Math.max(4, Math.min(96, Math.round(prog.percent * span))),
+                  stage: prog.stage,
+                });
+              },
+            });
+
+            if (signal.aborted) {
+              const err = new Error('Processing cancelled.');
+              err.name = 'AbortError';
+              throw err;
+            }
+
+            if (diffusionDereverbOptions.chainMastering) {
+              const postRes = await processAudioBuffer(
+                ddRes.audioBuffer,
+                { ...options, noiseGateEnabled: false },
+                (prog) => {
+                  setProgress({
+                    percent: Math.round(72 + prog.percent * 0.26),
+                    stage: prog.stage,
+                  });
+                }
+              );
+              outBuffer = postRes.audioBuffer;
+              report = { ...postRes.report, diffusionDereverb: ddRes.report };
+              storageTag = `Diffusion Dereverb (${ddRes.report.mode}) + Mastering`;
+            } else {
+              outBuffer = ddRes.audioBuffer;
+              report = { diffusionDereverb: ddRes.report };
+              storageTag = `Diffusion Dereverb (${ddRes.report.mode})`;
+            }
+          } else if (processingEngine === 'deepfilternet' && !skipExternalDf) {
             try {
               const dfRes = await denoiseWithDeepFilterNet(workingBuffer, dfOptions, (prog) => {
-                const basePct = vcActive ? 55 : 0;
+                const basePct = preWorkerActive ? 55 : 0;
                 const span = dfOptions.chainMastering
-                  ? vcActive
+                  ? preWorkerActive
                     ? 25
                     : 65
-                  : vcActive
+                  : preWorkerActive
                     ? 41
                     : 96;
                 setProgress({
@@ -622,8 +912,8 @@ export default function App() {
                   dfRes.audioBuffer,
                   { ...effectiveOptions, noiseGateEnabled: false, postNeuralCleanup: true },
                   (prog) => {
-                    const basePct = vcActive ? 80 : 65;
-                    const span = vcActive ? 18 : 33;
+                    const basePct = preWorkerActive ? 80 : 65;
+                    const span = preWorkerActive ? 18 : 33;
                     setProgress({
                       percent: Math.round(basePct + (prog.percent / 100) * span),
                       stage: prog.stage,
@@ -636,15 +926,19 @@ export default function App() {
                   activePresetId && PRESETS[activePresetId]
                     ? PRESETS[activePresetId].label
                     : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
-                storageTag = vcActive
-                  ? `Voice Clean + DeepFilterNet3 + ${presetPart}`
-                  : `DeepFilterNet3 + ${presetPart}`;
+                storageTag = runIsolationWorker
+                  ? `Voice Isolation + DeepFilterNet3 + ${presetPart}`
+                  : vcActive
+                    ? `Voice Clean + DeepFilterNet3 + ${presetPart}`
+                    : `DeepFilterNet3 + ${presetPart}`;
               } else {
                 outBuffer = dfRes.audioBuffer;
                 report = { deepFilterElapsedMs: dfRes.elapsedMs };
-                storageTag = vcActive
-                  ? `Voice Clean + DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`
-                  : `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`;
+                storageTag = runIsolationWorker
+                  ? `Voice Isolation + DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`
+                  : vcActive
+                    ? `Voice Clean + DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`
+                    : `DeepFilterNet3 (${dfOptions.attenuationLimit} dB)`;
               }
             } catch (dfErr) {
               if (dfErr?.name === 'AbortError') throw dfErr;
@@ -656,7 +950,7 @@ export default function App() {
                 workingBuffer,
                 {
                   ...effectiveOptions,
-                  noiseGateEnabled: !vcActive,
+                  noiseGateEnabled: !preWorkerActive,
                   noiseMode: 'spectral',
                   noiseGateReductionDb: Math.max(
                     18,
@@ -667,11 +961,15 @@ export default function App() {
               );
               outBuffer = fallbackRes.audioBuffer;
               report = fallbackRes.report;
-              storageTag = vcActive ? 'Voice Clean + Spectral Fallback' : 'Spectral Wiener Fallback';
+              storageTag = runIsolationWorker
+                ? 'Voice Isolation + Mastering Fallback'
+                : vcActive
+                  ? 'Voice Clean + Spectral Fallback'
+                  : 'Spectral Wiener Fallback';
             }
-          } else if (!vcActive || hasPostStages) {
+          } else if (!preWorkerActive || hasPostStages) {
             const res = await processAudioBuffer(workingBuffer, effectiveOptions, (prog) => {
-              const pct = vcActive ? Math.round(68 + prog.percent * 0.3) : prog.percent;
+              const pct = preWorkerActive ? Math.round(68 + prog.percent * 0.3) : prog.percent;
               setProgress({ percent: pct, stage: prog.stage });
             });
             outBuffer = res.audioBuffer;
@@ -681,12 +979,16 @@ export default function App() {
               : activePresetId && PRESETS[activePresetId]
                 ? PRESETS[activePresetId].label
                 : `${options.targetLoudness} ${options.normalizeMode === 'rms' ? 'RMS' : 'LUFS'}`;
-            storageTag = vcActive
-              ? `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset}) · ${presetPart}`
-              : `Current DSP · ${presetPart}`;
+            storageTag = runIsolationWorker
+              ? `Voice Isolation (${voiceIsolationOptions.isolationStrength}%) · ${presetPart}`
+              : vcActive
+                ? `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset}) · ${presetPart}`
+                : `Current DSP · ${presetPart}`;
           } else {
             outBuffer = workingBuffer;
-            storageTag = `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset})`;
+            storageTag = runIsolationWorker
+              ? `Voice Isolation (${voiceIsolationOptions.isolationStrength}%)`
+              : `Voice Clean (${voiceCleanOptions.useAiDenoise ? 'AI' : voiceCleanOptions.preset})`;
           }
         }
 
@@ -699,8 +1001,30 @@ export default function App() {
         if (voiceCleanReport) {
           report = { ...report, voiceClean: voiceCleanReport };
         }
+        if (voiceIsolationReport) {
+          report = { ...report, voiceIsolation: voiceIsolationReport };
+        }
 
         const afterAnalysis = analyzeAudioBuffer(outBuffer);
+
+        // Evaluate Voice Target / Voice Isolation LRA range [4, 8] LU and attach an actionable warning if outside
+        const activeLraRange =
+          report.lraRange ||
+          (isVoiceTargetSimple ||
+          isVoiceIsolationSimple ||
+          activePresetId === 'voiceTarget' ||
+          activePresetId === 'voiceIsolation'
+            ? [4, 8]
+            : null);
+        if (activeLraRange && Number.isFinite(afterAnalysis.lraLu)) {
+          const [minLra, maxLra] = activeLraRange;
+          report.lraRange = activeLraRange;
+          if (afterAnalysis.lraLu < minLra) {
+            report.lraWarning = `Loudness Range (LRA) is ${afterAnalysis.lraLu.toFixed(1)} LU, below target ${minLra}–${maxLra} LU (dynamics may feel flat or over-leveled).`;
+          } else if (afterAnalysis.lraLu > maxLra) {
+            report.lraWarning = `Loudness Range (LRA) is ${afterAnalysis.lraLu.toFixed(1)} LU, above target ${minLra}–${maxLra} LU (consider enabling gentle compression or slightly higher leveling).`;
+          }
+        }
 
         setProcessedBuffer(outBuffer);
         setProcessedAnalysis(afterAnalysis);
@@ -721,9 +1045,11 @@ export default function App() {
         } else {
           console.error('Processing error:', err);
           setErrorMessage(
-            processingEngine === 'deepfilternet'
-              ? `DeepFilterNet3 processing failed (${err?.message || 'WASM error'}). Ensure WebAssembly SIMD is supported in your browser, or switch to Current DSP.`
-              : `Audio processing failed (${err?.message || 'unexpected error'}). Try a shorter clip or fewer simultaneous stages.`
+            processingEngine === 'diffusion-dereverb'
+              ? `Diffusion Dereverb API error: ${err?.message || 'Could not reach server.'}`
+              : processingEngine === 'deepfilternet'
+                ? `DeepFilterNet3 processing failed (${err?.message || 'WASM error'}). Ensure WebAssembly SIMD is supported in your browser, or switch to Current DSP.`
+                : `Audio processing failed (${err?.message || 'unexpected error'}). Try a shorter clip or fewer simultaneous stages.`
           );
         }
       } finally {
@@ -737,12 +1063,15 @@ export default function App() {
       isProcessing,
       processingEngine,
       dfOptions,
+      diffusionDereverbOptions,
       voiceCleanOptions,
+      voiceIsolationOptions,
       noiseRegion,
       options,
       pause,
       activePresetId,
       fileInfo,
+      getAudioContext,
       persistProcessedBuffer,
     ]
   );
@@ -1097,6 +1426,8 @@ export default function App() {
                 voiceCleanOptions={voiceCleanOptions}
                 onChangeVoiceCleanOption={handleChangeVoiceCleanOption}
                 onApplyVoiceCleanPreset={handleApplyVoiceCleanPreset}
+                voiceIsolationOptions={voiceIsolationOptions}
+                onChangeVoiceIsolationOption={handleChangeVoiceIsolationOption}
                 options={options}
                 onChangeOption={handleChangeOption}
                 onProcess={() => handleProcess(true)}
@@ -1133,9 +1464,13 @@ export default function App() {
                   onChangeEngine={setProcessingEngine}
                   dfOptions={dfOptions}
                   onChangeDfOption={handleChangeDfOption}
+                  diffusionDereverbOptions={diffusionDereverbOptions}
+                  onChangeDiffusionDereverbOption={handleChangeDiffusionDereverbOption}
                   voiceCleanOptions={voiceCleanOptions}
                   onChangeVoiceCleanOption={handleChangeVoiceCleanOption}
                   onApplyVoiceCleanPreset={handleApplyVoiceCleanPreset}
+                  voiceIsolationOptions={voiceIsolationOptions}
+                  onChangeVoiceIsolationOption={handleChangeVoiceIsolationOption}
                   noiseRegion={noiseRegion}
                   isSelectingNoise={isSelectingNoise}
                   onToggleSelectingNoise={setIsSelectingNoise}

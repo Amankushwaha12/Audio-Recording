@@ -7,6 +7,7 @@
  */
 
 import { runVoiceCleanPipeline } from './voiceCleanCore.js';
+import { runVoiceIsolationPipeline } from './voiceIsolation.js';
 
 /**
  * Runs Voice Clean off the main thread in a dedicated Web Worker.
@@ -53,12 +54,20 @@ export async function runVoiceCleanInWorker(
     return outBuf;
   };
 
-  // Fallback for environments without Web Worker support (e.g., SSR / unit test runners)
-  if (typeof Worker === 'undefined') {
-    const res = await runVoiceCleanPipeline(copies, sampleRate, options, {
+  const runLocalFallback = () => {
+    const fn =
+      options?.mode === 'voiceIsolation'
+        ? runVoiceIsolationPipeline
+        : runVoiceCleanPipeline;
+    return fn(copies, sampleRate, options, {
       onProgress,
       shouldAbort: () => Boolean(signal?.aborted),
     });
+  };
+
+  // Fallback for environments without Web Worker support (e.g., SSR / unit test runners)
+  if (typeof Worker === 'undefined') {
+    const res = await runLocalFallback();
     return {
       audioBuffer: rebuildAudioBuffer(res.channels),
       report: res.report,
@@ -73,10 +82,7 @@ export async function runVoiceCleanInWorker(
       });
     } catch (spawnErr) {
       // Graceful fallback if worker construction is blocked by CSP
-      runVoiceCleanPipeline(copies, sampleRate, options, {
-        onProgress,
-        shouldAbort: () => Boolean(signal?.aborted),
-      })
+      runLocalFallback()
         .then((res) =>
           resolve({
             audioBuffer: rebuildAudioBuffer(res.channels),
@@ -169,4 +175,15 @@ export async function runVoiceCleanInWorker(
       transferList
     );
   });
+}
+
+/**
+ * Runs the Voice Isolation pipeline off the main thread in the dedicated Web Worker.
+ */
+export function runVoiceIsolationInWorker(inputBuffer, options = {}, hooks = {}) {
+  return runVoiceCleanInWorker(
+    inputBuffer,
+    { ...options, mode: 'voiceIsolation' },
+    hooks
+  );
 }

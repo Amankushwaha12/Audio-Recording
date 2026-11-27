@@ -8,6 +8,7 @@
  */
 
 import { runVoiceCleanPipeline } from './voiceCleanCore.js';
+import { runVoiceIsolationPipeline } from './voiceIsolation.js';
 import { DeepFilterWasmDenoiser, ENABLE_AI_DENOISER } from './aiDenoiser.js';
 
 let cancelled = false;
@@ -27,8 +28,9 @@ self.onmessage = async (event) => {
   const { channels, sampleRate, options, wasmBinUrl } = msg;
 
   try {
+    const wantAi = Boolean(options?.useAiDenoise || options?.useAiBoost);
     const aiDenoiseFn =
-      ENABLE_AI_DENOISER && options?.useAiDenoise
+      ENABLE_AI_DENOISER && wantAi
         ? (chList, sr, opts) =>
             DeepFilterWasmDenoiser.processChannels(chList, sr, {
               ...opts,
@@ -36,7 +38,12 @@ self.onmessage = async (event) => {
             })
         : undefined;
 
-    const result = await runVoiceCleanPipeline(channels, sampleRate, options, {
+    const pipelineFn =
+      options?.mode === 'voiceIsolation'
+        ? runVoiceIsolationPipeline
+        : runVoiceCleanPipeline;
+
+    const result = await pipelineFn(channels, sampleRate, options, {
       aiDenoiseFn,
       shouldAbort: () => cancelled,
       onProgress: (prog) => {

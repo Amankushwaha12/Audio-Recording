@@ -32,11 +32,116 @@ import {
   measureBS1770Loudness,
 } from './analyzer.js';
 import { fftRadix2, ifftRadix2 } from './fft.js';
+import {
+  VOICE_TARGET,
+  detectAndRemoveMainsHum,
+  evaluateVoiceTargetDenoise,
+  levelerStrengthToNumber,
+} from './voiceTarget.js';
 
 /**
  * Curated mastering presets covering both Current DSP and DeepFilterNet3 engines.
  */
 export const PRESETS = {
+  voiceTarget: {
+    id: 'voiceTarget',
+    label: 'Voice Target (-16)',
+    summary:
+      'SNR-adaptive denoise, 50/60 Hz hum notch (4 harmonics), ±3 dB Auto-EQ, gentle ±6 dB leveler, 15% dry mix, -16 LUFS (±0.5 LU), -1.0 dBTP, LRA 4–8 LU',
+    recommendedEngine: 'dsp',
+    voiceTargetSpec: VOICE_TARGET,
+    dfOptions: {
+      attenuationLimit: 42,
+      postFilterBeta: 0.0,
+      chainMastering: true,
+    },
+    options: {
+      highPassEnabled: true,
+      highPassFreq: 75,
+      humDetectEnabled: VOICE_TARGET.hum.detect,
+      humMains: VOICE_TARGET.hum.mains,
+      humHarmonics: VOICE_TARGET.hum.harmonics,
+      noiseGateEnabled: true,
+      noiseMode: 'spectral',
+      adaptiveDenoise: true,
+      noiseGateReductionDb: 16,
+      noiseGateMarginDb: 6,
+      voiceClarityEnabled: VOICE_TARGET.autoEQ.enabled,
+      voiceClarityAmount: 0.75,
+      autoEqMaxAdjustDb: VOICE_TARGET.autoEQ.maxAdjustDb,
+      smoothToneEnabled: false,
+      smoothToneAmount: 0.45,
+      compressorEnabled: false,
+      compThresholdDb: -20,
+      compRatio: 2.0,
+      compAttackMs: 14,
+      compReleaseMs: 140,
+      levelerEnabled: VOICE_TARGET.leveler.enabled,
+      levelerStrength: levelerStrengthToNumber(VOICE_TARGET.leveler.strength),
+      levelerMaxGainDb: VOICE_TARGET.leveler.maxGainDb,
+      dryMix: VOICE_TARGET.dryMix,
+      normalizeEnabled: true,
+      normalizeMode: 'lufs',
+      targetLoudness: VOICE_TARGET.loudnessLUFS,
+      loudnessTolerance: VOICE_TARGET.loudnessTolerance,
+      limiterCeilingDbtp: VOICE_TARGET.truePeakDb,
+      lraRange: VOICE_TARGET.lraRange,
+      silenceTrimEnabled: false,
+      silenceMaxPauseSec: 1.2,
+    },
+  },
+  voiceIsolation: {
+    id: 'voiceIsolation',
+    label: 'Voice Isolation',
+    summary:
+      'Isolates foreground voice from stereo music, chatter & ambience via center extraction, harmonic speech masking, 50/60 Hz hum notch & -16 LUFS polish',
+    recommendedEngine: 'dsp',
+    voiceIsolationOptions: {
+      enabled: true,
+      isolationStrength: 75,
+      centerFocus: 70,
+      backgroundAttenuationDb: 24,
+      naturalBlend: 8,
+      vocalBandFocus: true,
+      useAiBoost: false,
+    },
+    dfOptions: {
+      attenuationLimit: 60,
+      postFilterBeta: 0.0,
+      chainMastering: true,
+    },
+    options: {
+      highPassEnabled: false,
+      highPassFreq: 85,
+      humDetectEnabled: false,
+      noiseGateEnabled: false,
+      noiseMode: 'spectral',
+      noiseGateReductionDb: 18,
+      noiseGateMarginDb: 6,
+      voiceClarityEnabled: true,
+      voiceClarityAmount: 0.45,
+      autoEqMaxAdjustDb: 3,
+      smoothToneEnabled: true,
+      smoothToneAmount: 0.35,
+      compressorEnabled: true,
+      compThresholdDb: -20,
+      compRatio: 2.2,
+      compAttackMs: 12,
+      compReleaseMs: 140,
+      levelerEnabled: true,
+      levelerStrength: 0.55,
+      levelerMaxGainDb: 6,
+      dryMix: 0,
+      normalizeEnabled: true,
+      normalizeMode: 'lufs',
+      targetLoudness: -16,
+      loudnessTolerance: 0.5,
+      limiterCeilingDbtp: -1.0,
+      lraRange: [4, 8],
+      silenceTrimEnabled: false,
+      silenceMaxPauseSec: 1.2,
+    },
+  },
   studioAi: {
     id: 'studioAi',
     label: 'Studio AI Master',
@@ -654,11 +759,16 @@ function makeLowShelfCoeffs(sampleRate, freqHz, gainDb, slope = 0.8) {
  *   - Always followed by a split-band dynamic de-esser (5.8 kHz+) so sibilants
  *     remain smooth and natural.
  */
-function runVoiceClarityEqAndDeEsser(channels, sampleRate, amount = 0.75) {
+function runVoiceClarityEqAndDeEsser(channels, sampleRate, amount = 0.75, maxAdjustDb = null) {
   const amt = Math.max(0, Math.min(1, amount));
   if (amt <= 0.01) {
     return channels;
   }
+
+  const clampEq = (db) =>
+    typeof maxAdjustDb === 'number' && Number.isFinite(maxAdjustDb) && maxAdjustDb > 0
+      ? Math.max(-maxAdjustDb, Math.min(maxAdjustDb, db))
+      : db;
 
   // Analyze spectral balance during active speech frames
   const mono = channels[0];
@@ -699,13 +809,15 @@ function runVoiceClarityEqAndDeEsser(channels, sampleRate, amount = 0.75) {
     darknessFactor = Math.max(0, Math.min(1, (tiltDb - 9) / 13));
   }
 
-  // Refined, natural vocal clarity curves (never sharp or piercing!)
-  const deMudDb = -(1.8 + 2.2 * darknessFactor) * amt; // -1.8 dB to -4.0 dB @ 260 Hz
-  const deBoomDb = darknessFactor > 0.35 ? -(1.8 * (darknessFactor - 0.35) / 0.65) * amt : 0; // Gentle low-shelf tidy below 180 Hz
-  const presenceDb = (1.6 + 2.4 * darknessFactor) * amt; // +1.6 dB to +4.0 dB @ 2.8 kHz (crisp without harshness)
-  const brillianceDb = (1.0 + 1.6 * darknessFactor) * amt; // +1.0 dB to +2.6 dB @ 6.4 kHz shelf
+  // Refined, natural vocal clarity curves (clamped to ±maxAdjustDb when configured, e.g. ±3 dB for Voice Target)
+  const deMudDb = clampEq(-(1.8 + 2.2 * darknessFactor) * amt); // -1.8 dB to -4.0 dB @ 260 Hz
+  const deBoomDb = clampEq(
+    darknessFactor > 0.35 ? -(1.8 * ((darknessFactor - 0.35) / 0.65)) * amt : 0
+  ); // Gentle low-shelf tidy below 180 Hz
+  const presenceDb = clampEq((1.6 + 2.4 * darknessFactor) * amt); // +1.6 dB to +4.0 dB @ 2.8 kHz
+  const brillianceDb = clampEq((1.0 + 1.6 * darknessFactor) * amt); // +1.0 dB to +2.6 dB @ 6.4 kHz shelf
   // Preserve natural warmth unless microphone is extremely dark
-  const warmthDb = (1.1 * (1 - darknessFactor * 0.7)) * amt;
+  const warmthDb = clampEq(1.1 * (1 - darknessFactor * 0.7) * amt);
 
   const deBoom = deBoomDb < -0.2 ? makeLowShelfCoeffs(sampleRate, 180, deBoomDb, 0.75) : null;
   const deMud = makePeakingCoeffs(sampleRate, 260, deMudDb, 0.95);
@@ -854,7 +966,7 @@ function runSmoothTone(channels, sampleRate, amount = 0.6) {
  * gently across brief pauses (instead of snapping to 0 dB mid-word!). Prevents
  * volume pumping and prevents boosting breaths or quiet background noise.
  */
-function runAutoLeveler(channels, sampleRate, strength = 0.75) {
+function runAutoLeveler(channels, sampleRate, strength = 0.75, maxGainDb = 6.5) {
   const numChannels = channels.length;
   const length = channels[0].length;
   const hopSamples = Math.max(1, Math.round(0.2 * sampleRate)); // 200 ms step
@@ -894,9 +1006,10 @@ function runAutoLeveler(channels, sampleRate, strength = 0.75) {
   activeLevels.sort((a, b) => a - b);
   const targetSpeechDb = activeLevels[Math.floor(activeLevels.length * 0.75)];
 
-  // Cap gain range tightly (±6.5 dB max) so leveling stays completely transparent
-  const maxBoostDb = 6.5 * strength;
-  const maxCutDb = -6.0 * strength;
+  // Cap gain range tightly (default ±6.5 dB, or explicit maxGainDb e.g. ±6 dB for Voice Target)
+  const capDb = Math.max(1, Math.min(12, maxGainDb || 6.5));
+  const maxBoostDb = Math.min(capDb, capDb * Math.max(0.5, strength));
+  const maxCutDb = -Math.min(capDb, Math.min(6.0, capDb) * Math.max(0.5, strength));
   const rawGainDb = new Float32Array(numSteps);
 
   let lastSpeechGainDb = 0;
@@ -1028,7 +1141,7 @@ function runCompressor(
 function runNormalizeAndLimit(
   channels,
   sampleRate,
-  { mode = 'lufs', targetLoudness = -16, ceilingDbtp = -1.0 }
+  { mode = 'lufs', targetLoudness = -16, ceilingDbtp = -1.0, toleranceLu = 0.5 }
 ) {
   const numChannels = channels.length;
   const length = channels[0].length;
@@ -1143,22 +1256,24 @@ function runNormalizeAndLimit(
   let limiterMaxGrDb = pass1.maxGrDb;
   let totalMakeupDb = makeupDb;
 
-  // 2nd-pass target lock if heavy peak limiting pulled integrated LUFS below target
+  // Iterative precision target lock so integrated LUFS lands within ±toleranceLu (default ±0.5 LU)
   if (currentLevel > -68 && mode === 'lufs') {
-    const postLufs = measureBS1770Loudness(out, sampleRate).integratedLufs;
-    const shortfall = targetLoudness - postLufs;
-    if (shortfall > 0.3 && shortfall < 8) {
-      const topUpDb = Math.min(3.5, shortfall);
-      const topUpLin = dbToLinear(topUpDb);
+    const tol = Math.max(0.15, toleranceLu || 0.5);
+    for (let iter = 0; iter < 3; iter++) {
+      const postLufs = measureBS1770Loudness(out, sampleRate).integratedLufs;
+      const diff = targetLoudness - postLufs;
+      if (Math.abs(diff) <= tol * 0.5 || Math.abs(diff) >= 8) break;
+      const trimDb = Math.max(-4, Math.min(3.5, diff));
+      const trimLin = dbToLinear(trimDb);
       const topped = out.map((ch) => {
         const arr = new Float32Array(length);
-        for (let i = 0; i < length; i++) arr[i] = ch[i] * topUpLin;
+        for (let i = 0; i < length; i++) arr[i] = ch[i] * trimLin;
         return arr;
       });
       const pass2 = applyTruePeakLimiter(topped);
       out = pass2.channels;
       limiterMaxGrDb = Math.max(limiterMaxGrDb, pass2.maxGrDb);
-      totalMakeupDb += topUpDb;
+      totalMakeupDb += trimDb;
     }
   }
 
@@ -1289,6 +1404,12 @@ export async function processAudioBuffer(inputBuffer, options, onProgress) {
   const report = {
     estimatedNoiseFloorDb: null,
     gateThresholdDb: null,
+    measuredSnrDb: null,
+    adaptiveDenoiseStrength: null,
+    humReport: null,
+    dryMixApplied: 0,
+    lraRange: options.lraRange || null,
+    loudnessTolerance: options.loudnessTolerance || null,
     compressorMaxGrDb: 0,
     levelerTargetDb: null,
     normalizeMakeupDb: 0,
@@ -1301,32 +1422,90 @@ export async function processAudioBuffer(inputBuffer, options, onProgress) {
     await yieldToUI();
   };
 
+  // Optional Mains Hum Detection & 4-Harmonic Notch (runs before HPF so 50/60 Hz fundamental is measurable)
+  if (options.humDetectEnabled) {
+    await notify(8, 'Detecting 50/60 Hz mains hum & harmonics...');
+    const humRes = detectAndRemoveMainsHum(channels, sampleRate, {
+      detect: true,
+      mains: options.humMains || VOICE_TARGET.hum.mains,
+      harmonics: options.humHarmonics || VOICE_TARGET.hum.harmonics,
+    });
+    channels = humRes.channels;
+    report.humReport = humRes.report;
+  }
+
   // Stage a: 4th-order High-pass filter (24 dB/oct)
   if (options.highPassEnabled) {
     await notify(12, `Stage A: 24 dB/oct High-pass filter (${options.highPassFreq} Hz)...`);
     channels = runHighPassFilter(channels, sampleRate, options.highPassFreq);
   }
 
+  // Keep a time-aligned pre-cleaned dry reference when dryMix > 0 is requested directly in processor.js
+  const requestedDryMix =
+    typeof options.dryMix === 'number' && options.dryMix > 0.001
+      ? Math.max(0, Math.min(0.5, options.dryMix))
+      : 0;
+  const dryReference =
+    requestedDryMix > 0 ? channels.map((ch) => Float32Array.from(ch)) : null;
+
   // Stage b: Noise reduction (Spectral Wiener STFT or Speech-Relative Gate/Expander)
   if (options.noiseGateEnabled) {
     const useSpectral = (options.noiseMode || 'spectral') === 'spectral';
-    await notify(
-      26,
-      useSpectral
-        ? `Stage B: STFT Spectral Wiener denoising (-${options.noiseGateReductionDb} dB)...`
-        : `Stage B: Speech-relative noise expander (-${options.noiseGateReductionDb} dB)...`
-    );
-    const res = useSpectral
-      ? runSpectralDenoiser(channels, sampleRate, options.noiseGateReductionDb)
-      : runNoiseGate(
-          channels,
-          sampleRate,
-          options.noiseGateReductionDb,
-          options.noiseGateMarginDb ?? 6
-        );
-    channels = res.channels;
-    report.estimatedNoiseFloorDb = res.noiseFloorDb;
-    report.gateThresholdDb = res.thresholdDb;
+    let effectiveReductionDb = options.noiseGateReductionDb;
+
+    if (options.adaptiveDenoise) {
+      // Measure active speech vs quietest-10% noise floor to evaluate Voice Target denoise(snrDb)
+      const speechDb = measureActiveSpeechRmsDb(channels, sampleRate);
+      const frameSamples = Math.max(1, Math.round(0.05 * sampleRate));
+      const numFrames = Math.max(1, Math.ceil(channels[0].length / frameSamples));
+      const nonZeroDbs = [];
+      for (let f = 0; f < numFrames; f++) {
+        const s0 = f * frameSamples;
+        const s1 = Math.min(channels[0].length, s0 + frameSamples);
+        let sq = 0;
+        let cnt = 0;
+        for (let i = s0; i < s1; i++) {
+          for (let ch = 0; ch < numChannels; ch++) {
+            const v = channels[ch][i];
+            sq += v * v;
+            cnt++;
+          }
+        }
+        const db = linearToDb(Math.sqrt(sq / Math.max(1, cnt)));
+        if (db > -85) nonZeroDbs.push(db);
+      }
+      nonZeroDbs.sort((a, b) => a - b);
+      const floorDb =
+        nonZeroDbs.length > 0 ? nonZeroDbs[Math.floor(nonZeroDbs.length * 0.1)] : -85;
+      const snrDb = speechDb - floorDb;
+      const strength = evaluateVoiceTargetDenoise(snrDb);
+      report.measuredSnrDb = snrDb;
+      report.adaptiveDenoiseStrength = strength;
+      report.estimatedNoiseFloorDb = floorDb;
+      effectiveReductionDb = strength <= 0 ? 0 : Math.round(6 + strength * 16);
+    }
+
+    if (effectiveReductionDb > 0) {
+      await notify(
+        26,
+        useSpectral
+          ? `Stage B: STFT Spectral Wiener denoising (-${effectiveReductionDb} dB)...`
+          : `Stage B: Speech-relative noise expander (-${effectiveReductionDb} dB)...`
+      );
+      const res = useSpectral
+        ? runSpectralDenoiser(channels, sampleRate, effectiveReductionDb)
+        : runNoiseGate(
+            channels,
+            sampleRate,
+            effectiveReductionDb,
+            options.noiseGateMarginDb ?? 6
+          );
+      channels = res.channels;
+      report.estimatedNoiseFloorDb = res.noiseFloorDb;
+      report.gateThresholdDb = res.thresholdDb;
+    } else {
+      await notify(26, 'Stage B: High SNR (>50 dB) — adaptive denoise skipped.');
+    }
   } else if (options.postNeuralCleanup) {
     // Ultra-gentle pause polish after DeepFilterNet3 (only touches deep silent gaps >340ms)
     await notify(26, 'Polishing silent pauses...');
@@ -1338,14 +1517,19 @@ export async function processAudioBuffer(inputBuffer, options, onProgress) {
 
   // Stage +: Adaptive Studio Voice Clarity EQ & Split-Band De-Esser
   if (options.voiceClarityEnabled) {
+    const capNote =
+      typeof options.autoEqMaxAdjustDb === 'number'
+        ? `, ±${options.autoEqMaxAdjustDb} dB cap`
+        : '';
     await notify(
       36,
-      `Adaptive Voice Clarity EQ & De-Esser (${Math.round((options.voiceClarityAmount ?? 0.6) * 100)}%)...`
+      `Adaptive Auto-EQ & De-Esser (${Math.round((options.voiceClarityAmount ?? 0.6) * 100)}%${capNote})...`
     );
     channels = runVoiceClarityEqAndDeEsser(
       channels,
       sampleRate,
-      options.voiceClarityAmount ?? 0.6
+      options.voiceClarityAmount ?? 0.6,
+      options.autoEqMaxAdjustDb ?? null
     );
   }
 
@@ -1365,7 +1549,12 @@ export async function processAudioBuffer(inputBuffer, options, onProgress) {
   // Stage d: Smooth Phrase Auto-Leveler (runs BEFORE compressor for zero pumping!)
   if (options.levelerEnabled) {
     await notify(54, 'Smooth phrase auto-leveler (holding gain cleanly across pauses)...');
-    const res = runAutoLeveler(channels, sampleRate, options.levelerStrength ?? 0.75);
+    const res = runAutoLeveler(
+      channels,
+      sampleRate,
+      options.levelerStrength ?? 0.75,
+      options.levelerMaxGainDb ?? 6.5
+    );
     channels = res.channels;
     report.levelerTargetDb = res.targetSpeechDb;
   }
@@ -1386,6 +1575,21 @@ export async function processAudioBuffer(inputBuffer, options, onProgress) {
     report.compressorMaxGrDb = res.maxGainReductionDb;
   }
 
+  // Optional Dry Mix blend (e.g. 15% original voice mixed back in before loudness normalization)
+  if (dryReference && requestedDryMix > 0) {
+    await notify(76, `Blending ${Math.round(requestedDryMix * 100)}% dry voice for naturalness...`);
+    const wetWeight = 1 - requestedDryMix;
+    for (let ch = 0; ch < numChannels; ch++) {
+      const w = channels[ch];
+      const d = dryReference[ch];
+      const len = Math.min(w.length, d.length);
+      for (let i = 0; i < len; i++) {
+        w[i] = w[i] * wetWeight + d[i] * requestedDryMix;
+      }
+    }
+    report.dryMixApplied = requestedDryMix;
+  }
+
   // Stage e: 2-Pass Loudness Normalization + True-Peak Limiter
   if (options.normalizeEnabled) {
     const unit = options.normalizeMode === 'rms' ? 'dBFS RMS' : 'LUFS';
@@ -1397,6 +1601,7 @@ export async function processAudioBuffer(inputBuffer, options, onProgress) {
       mode: options.normalizeMode,
       targetLoudness: options.targetLoudness,
       ceilingDbtp: options.limiterCeilingDbtp,
+      toleranceLu: options.loudnessTolerance ?? 0.5,
     });
     channels = res.channels;
     report.normalizeMakeupDb = res.makeupDb;

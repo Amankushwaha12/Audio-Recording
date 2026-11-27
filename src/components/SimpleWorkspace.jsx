@@ -10,6 +10,8 @@ export default function SimpleWorkspace({
   voiceCleanOptions,
   onChangeVoiceCleanOption,
   onApplyVoiceCleanPreset,
+  voiceIsolationOptions,
+  onChangeVoiceIsolationOption,
   options,
   onChangeOption,
   onProcess,
@@ -39,6 +41,7 @@ export default function SimpleWorkspace({
   onOpenAdvanced,
 }) {
   const presets = Object.values(VOICE_CLEAN_PRESETS);
+  const isIsolationActive = voiceCleanOptions.preset === 'voiceIsolation';
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] gap-6 items-start">
@@ -52,8 +55,8 @@ export default function SimpleWorkspace({
             Simple Voice Clean
           </h2>
           <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-            Pick a cleanup profile and click Clean Audio. Background noise and room echo are
-            reduced in a Web Worker while keeping your original loudness natural.
+            Pick a cleanup or Voice Isolation profile and click Process. All DSP runs in a
+            dedicated Web Worker so playback stays responsive.
           </p>
         </div>
 
@@ -63,13 +66,19 @@ export default function SimpleWorkspace({
             <div className="flex items-center justify-between text-xs">
               <span className="font-medium text-[var(--text-secondary)]">Cleanup Profile</span>
               <span className="font-mono text-[11px] text-[var(--text-subtle)]">
-                Noise {voiceCleanOptions.noiseReduction}% · Reverb {voiceCleanOptions.reverbReduction}%
+                {isIsolationActive
+                  ? `Isolate ${voiceIsolationOptions?.isolationStrength ?? 75}% · Center ${voiceIsolationOptions?.centerFocus ?? 70}%`
+                  : voiceCleanOptions.preset === 'voiceTarget'
+                    ? 'Auto SNR · -16 LUFS'
+                    : `Noise ${voiceCleanOptions.noiseReduction}% · Reverb ${voiceCleanOptions.reverbReduction}%`}
               </span>
             </div>
 
             <div className="grid grid-cols-1 gap-2">
               {presets.map((preset) => {
                 const isActive = voiceCleanOptions.preset === preset.id;
+                const isVoiceTarget = preset.id === 'voiceTarget';
+                const isVoiceIsolation = preset.id === 'voiceIsolation';
                 return (
                   <button
                     key={preset.id}
@@ -90,7 +99,11 @@ export default function SimpleWorkspace({
                         {preset.label}
                       </span>
                       <span className="font-mono tabular-nums text-[11px] text-[var(--text-subtle)]">
-                        {preset.noiseReduction}% / {preset.reverbReduction}% / {preset.naturalBlend}%
+                        {isVoiceIsolation
+                          ? 'Center + Speech Mask'
+                          : isVoiceTarget
+                            ? 'Auto SNR / 15% dry / LRA 4–8'
+                            : `${preset.noiseReduction}% / ${preset.reverbReduction}% / ${preset.naturalBlend}%`}
                       </span>
                     </div>
                     <p className="text-xs text-[var(--text-muted)] mt-1 leading-snug">
@@ -102,8 +115,78 @@ export default function SimpleWorkspace({
             </div>
           </div>
 
+          {/* Focused Voice Isolation controls when Voice Isolation profile is selected */}
+          {isIsolationActive && voiceIsolationOptions && (
+            <div className="pt-4 border-t border-[var(--border)] space-y-3">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <label htmlFor="simple-iso-strength" className="text-[var(--text-secondary)]">
+                    Isolation strength
+                  </label>
+                  <span className="font-mono tabular-nums text-[var(--accent)] font-medium">
+                    {voiceIsolationOptions.isolationStrength}%
+                  </span>
+                </div>
+                <input
+                  id="simple-iso-strength"
+                  type="range"
+                  min={20}
+                  max={100}
+                  step={5}
+                  value={voiceIsolationOptions.isolationStrength}
+                  onChange={(e) =>
+                    onChangeVoiceIsolationOption?.('isolationStrength', parseFloat(e.target.value))
+                  }
+                  className="lab-slider"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <label htmlFor="simple-iso-center" className="text-[var(--text-secondary)]">
+                    Stereo center focus
+                  </label>
+                  <span className="font-mono tabular-nums text-[var(--text)] font-medium">
+                    {voiceIsolationOptions.centerFocus}%
+                  </span>
+                </div>
+                <input
+                  id="simple-iso-center"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={voiceIsolationOptions.centerFocus}
+                  onChange={(e) =>
+                    onChangeVoiceIsolationOption?.('centerFocus', parseFloat(e.target.value))
+                  }
+                  className="lab-slider"
+                />
+              </div>
+            </div>
+          )}
+
           {/* Essential Simple Toggles */}
           <div className="pt-4 border-t border-[var(--border)] space-y-3">
+            {voiceCleanOptions.preset === 'voiceTarget' && (
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={(options.limiterCeilingDbtp ?? -1.0) <= -1.45}
+                  onChange={(e) =>
+                    onChangeOption('limiterCeilingDbtp', e.target.checked ? -1.5 : -1.0)
+                  }
+                  className="mt-0.5 w-4 h-4 accent-[var(--accent)] cursor-pointer"
+                />
+                <span className="text-xs text-[var(--text-secondary)] leading-snug">
+                  MP3 / AAC true-peak headroom (-1.5 dBTP)
+                  <span className="block text-[11px] text-[var(--text-subtle)] mt-0.5">
+                    Default is -1.0 dBTP; enable -1.5 dBTP when encoding lossy MP3 or AAC
+                  </span>
+                </span>
+              </label>
+            )}
+
             <label className="flex items-start gap-2.5 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -116,7 +199,9 @@ export default function SimpleWorkspace({
               <span className="text-xs text-[var(--text-secondary)] leading-snug">
                 Keep original loudness
                 <span className="block text-[11px] text-[var(--text-subtle)] mt-0.5">
-                  Matches input LUFS within ±0.5 LU with -1.5 dBTP protection (never clips)
+                  {voiceCleanOptions.preset === 'voiceTarget' || isIsolationActive
+                    ? 'Off by default (-16 LUFS broadcast polish active)'
+                    : 'Matches input LUFS within ±0.5 LU with -1.5 dBTP protection (never clips)'}
                 </span>
               </span>
             </label>
@@ -145,7 +230,9 @@ export default function SimpleWorkspace({
                   className="mt-0.5 w-4 h-4 accent-[var(--accent)] cursor-pointer"
                 />
                 <span className="text-xs text-[var(--text-secondary)] leading-snug">
-                  AI denoise (DeepFilterNet3)
+                  {isIsolationActive
+                    ? 'AI neural boost (DeepFilterNet3)'
+                    : 'AI denoise (DeepFilterNet3)'}
                   <span className="block text-[11px] text-[var(--text-subtle)] mt-0.5">
                     Lazy-loads 48 kHz neural speech denoiser inside the Web Worker
                   </span>
@@ -164,7 +251,13 @@ export default function SimpleWorkspace({
             className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-xs font-bold tracking-wider uppercase bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-ink)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            {isProcessing ? 'Cleaning Audio...' : 'Clean Audio'}
+            {isProcessing
+              ? isIsolationActive
+                ? 'Isolating Voice...'
+                : 'Cleaning Audio...'
+              : isIsolationActive
+                ? 'Isolate Voice'
+                : 'Clean Audio'}
           </button>
 
           {isProcessing && (

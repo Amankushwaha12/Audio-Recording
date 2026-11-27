@@ -48,6 +48,11 @@ import {
   measureBS1770Loudness,
 } from './analyzer.js';
 import { fftRadix2, ifftRadix2 } from './fft.js';
+import {
+  VOICE_TARGET,
+  detectAndRemoveMainsHum,
+  evaluateVoiceTargetDenoise,
+} from './voiceTarget.js';
 
 /**
  * One-click Voice Clean presets (all sliders remain freely overridable).
@@ -60,6 +65,9 @@ export const VOICE_CLEAN_PRESETS = {
     noiseReduction: 40,
     reverbReduction: 20,
     naturalBlend: 25,
+    adaptiveDenoise: false,
+    humDetect: false,
+    keepOriginalLoudness: true,
   },
   clear: {
     id: 'clear',
@@ -68,6 +76,9 @@ export const VOICE_CLEAN_PRESETS = {
     noiseReduction: 60,
     reverbReduction: 40,
     naturalBlend: 15,
+    adaptiveDenoise: false,
+    humDetect: false,
+    keepOriginalLoudness: true,
   },
   strong: {
     id: 'strong',
@@ -76,6 +87,34 @@ export const VOICE_CLEAN_PRESETS = {
     noiseReduction: 80,
     reverbReduction: 65,
     naturalBlend: 10,
+    adaptiveDenoise: false,
+    humDetect: false,
+    keepOriginalLoudness: true,
+  },
+  voiceTarget: {
+    id: 'voiceTarget',
+    label: 'Voice Target (-16 LUFS)',
+    description:
+      'SNR-adaptive denoise, 50/60 Hz hum notch (4 harmonics), ±3 dB Auto-EQ, gentle ±6 dB leveler, 15% dry mix, -16 LUFS (±0.5 LU), -1.0 dBTP, LRA 4–8 LU',
+    noiseReduction: 60,
+    reverbReduction: 0,
+    naturalBlend: Math.round(VOICE_TARGET.dryMix * 100),
+    adaptiveDenoise: true,
+    humDetect: true,
+    keepOriginalLoudness: false,
+  },
+  voiceIsolation: {
+    id: 'voiceIsolation',
+    label: 'Voice Isolation',
+    description:
+      'Isolates foreground speaker from stereo music, chatter & room bleed using center-voice extraction, harmonic speech masking, 85 Hz–11.5 kHz vocal focus & -16 LUFS polish',
+    noiseReduction: 80,
+    reverbReduction: 35,
+    naturalBlend: 8,
+    adaptiveDenoise: false,
+    humDetect: true,
+    isVoiceIsolation: true,
+    keepOriginalLoudness: false,
   },
 };
 
@@ -87,6 +126,8 @@ export const DEFAULT_VOICE_CLEAN_OPTIONS = {
   naturalBlend: 15, // 0–100% dry voice mixed back in
   keepOriginalLoudness: true, // Match output LUFS to input within 0.5 LU
   useAiDenoise: false, // Stage 2: optional DeepFilterNet AI denoise
+  adaptiveDenoise: false, // Voice Target: SNR-adaptive denoise strength
+  humDetect: false, // Voice Target: 50/60 Hz mains hum + 4 harmonics notch
   noiseSampleRegion: null, // Optional { startSec, endSec }
 };
 
@@ -980,11 +1021,27 @@ export async function runVoiceCleanPipeline(
     );
   }
 
+  // Step 0b (optional): Automatic 50/60 Hz mains hum detection & 4-harmonic notch removal
+  // Runs BEFORE the 75 Hz HPF so 50/60 Hz fundamental is accurately measured and its
+  // 100/120/150/180/200/240 Hz harmonics are cleanly removed.
+  let preHpfSource = originalCopy;
+  let humReport = null;
+  if (options.humDetect) {
+    onProgress?.({
+      percent: 8,
+      stage: 'Voice Clean: Scanning for 50/60 Hz mains hum & harmonics...',
+    });
+    checkAbort();
+    const humRes = detectAndRemoveMainsHum(originalCopy, sampleRate, VOICE_TARGET.hum);
+    preHpfSource = humRes.channels;
+    humReport = humRes.report;
+  }
+
   // Step 1: Gentle 75 Hz High-Pass Pre-Clean (12 dB/oct Butterworth)
   onProgress?.({ percent: 10, stage: 'Voice Clean (1/7): Gentle 75 Hz high-pass rumble filter...' });
   checkAbort();
   const hpfCoeffs = makeHighPass2ndOrder(sampleRate, 75);
-  const dryPreClean = originalCopy.map((ch) => applyBiquad(ch, hpfCoeffs));
+  const dryPreClean = preHpfSource.map((ch) => applyBiquad(ch, hpfCoeffs));
 
   // Estimate global noise profile (user selection or quietest ~10% of frames)
   const { noisePsd, noiseFloorDb: estimatedNoiseFloorDb, source: noiseSource } =
@@ -996,18 +1053,32 @@ export async function runVoiceCleanPipeline(
   const requestedReverbPct = Math.max(0, Math.min(100, options.reverbReduction ?? 40));
   const naturalBlendFrac = Math.max(0, Math.min(1, (options.naturalBlend ?? 15) / 100));
 
-  // Clean-file protection: if input already has very high SNR (> 38 dB) and low floor (< -60 dB),
-  // gently cap unnecessary spectral noise reduction so clean recordings are never made worse.
-  const isAlreadyVeryClean =
-    !options.noiseSampleRegion &&
-    inputStats.snrDb > 38 &&
-    estimatedNoiseFloorDb < -60;
   let effectiveNoisePct = requestedNoisePct;
-  if (isAlreadyVeryClean && requestedNoisePct > 0) {
-    effectiveNoisePct = Math.min(requestedNoisePct, 25);
-    warnings.push(
-      `Recording is already very clean (floor ${estimatedNoiseFloorDb.toFixed(1)} dBFS, SNR ~${inputStats.snrDb.toFixed(0)} dB) — softened noise reduction automatically to preserve quality.`
-    );
+  let adaptiveDenoiseStrength = null;
+
+  if (options.adaptiveDenoise) {
+    // Voice Target SNR-adaptive denoise curve:
+    // snrDb > 50 ? 0 : snrDb > 30 ? 0.3 : snrDb > 15 ? 0.6 : 0.85
+    adaptiveDenoiseStrength = evaluateVoiceTargetDenoise(inputStats.snrDb);
+    effectiveNoisePct = Math.round(adaptiveDenoiseStrength * 100);
+    if (adaptiveDenoiseStrength === 0) {
+      warnings.push(
+        `High SNR detected (~${inputStats.snrDb.toFixed(1)} dB > 50 dB) — Voice Target skipped denoising automatically.`
+      );
+    }
+  } else {
+    // Clean-file protection: if input already has very high SNR (> 38 dB) and low floor (< -60 dB),
+    // gently cap unnecessary spectral noise reduction so clean recordings are never made worse.
+    const isAlreadyVeryClean =
+      !options.noiseSampleRegion &&
+      inputStats.snrDb > 38 &&
+      estimatedNoiseFloorDb < -60;
+    if (isAlreadyVeryClean && requestedNoisePct > 0) {
+      effectiveNoisePct = Math.min(requestedNoisePct, 25);
+      warnings.push(
+        `Recording is already very clean (floor ${estimatedNoiseFloorDb.toFixed(1)} dBFS, SNR ~${inputStats.snrDb.toFixed(0)} dB) — softened noise reduction automatically to preserve quality.`
+      );
+    }
   }
 
   // Auto-skip reverb reduction if audio is already dry
@@ -1145,12 +1216,20 @@ export async function runVoiceCleanPipeline(
   checkAbort();
 
   // Step 6: Gentle Tone Shaping (-2 dB @ 250 Hz, +1.5 dB @ 3.5 kHz)
-  onProgress?.({ percent: 88, stage: 'Voice Clean (6/7): Gentle tone shaping (-2 dB mud, +1.5 dB presence)...' });
-  working = runGentleToneShaping(working, sampleRate);
-  checkAbort();
+  // Skipped when an external Auto-EQ (such as Voice Target ±3 dB Auto-EQ) follows.
+  if (!options.skipToneShaping) {
+    onProgress?.({
+      percent: 88,
+      stage: 'Voice Clean (6/7): Gentle tone shaping (-2 dB mud, +1.5 dB presence)...',
+    });
+    working = runGentleToneShaping(working, sampleRate);
+    checkAbort();
+  }
 
   // Step 7: Loudness Match (within ±0.5 LU of input) + True-Peak Limiter (-1.5 dBTP)
   const shouldMatchLoudness = options.keepOriginalLoudness !== false;
+  const safetyCeiling =
+    typeof options.limiterCeilingDbtp === 'number' ? options.limiterCeilingDbtp : -1.5;
   let appliedGainDb = 0;
   let limiterMaxGrDb = 0;
 
@@ -1159,16 +1238,16 @@ export async function runVoiceCleanPipeline(
       percent: 93,
       stage: 'Voice Clean (7/7): Matching input LUFS (±0.5 LU) & limiting at -1.5 dBTP...',
     });
-    const matched = runLoudnessMatchAndLimit(working, sampleRate, inputLufs, -1.5);
+    const matched = runLoudnessMatchAndLimit(working, sampleRate, inputLufs, safetyCeiling);
     working = matched.channels;
     appliedGainDb = matched.appliedGainDb;
     limiterMaxGrDb = matched.limiterMaxGrDb;
   } else {
     onProgress?.({
       percent: 93,
-      stage: 'Voice Clean (7/7): Applying -1.5 dBTP true-peak safety limiter...',
+      stage: `Voice Clean (7/7): Applying ${safetyCeiling.toFixed(1)} dBTP true-peak safety limiter...`,
     });
-    const limited = applyTruePeakLimiter(working, sampleRate, -1.5);
+    const limited = applyTruePeakLimiter(working, sampleRate, safetyCeiling);
     working = limited.channels;
     limiterMaxGrDb = limited.maxGrDb;
   }
@@ -1193,6 +1272,10 @@ export async function runVoiceCleanPipeline(
       outputPeakDbtp,
       estimatedNoiseFloorDb,
       outputNoiseFloorDb: outputStats.noiseFloorDb,
+      measuredSnrDb: inputStats.snrDb,
+      adaptiveDenoiseStrength,
+      effectiveNoisePct,
+      humReport,
       estimatedRt60Sec: reverbInfo.rt60Sec,
       outputRt60Sec: outputReverb.rt60Sec,
       reverbSkipped,

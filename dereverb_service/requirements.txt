@@ -1,0 +1,18 @@
+# Core PyTorch + DSP + FastAPI dependencies (all permissive licenses: BSD/MIT/Apache-2.0)
+torch>=2.1.0,<3.0.0
+numpy>=1.24.0,<3.0.0
+scipy>=1.11.0,<2.0.0
+soundfile>=0.12.1
+pyloudnorm>=0.1.1
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# Testing
+pytest>=8.0.0
+
+# Optional evaluation extras (install separately if running full benchmark suite):
+#   pip install frechet_audio_distance   # 16 kHz VGGish FAD (Apache-2.0)
+#   pip install faster-whisper jiwer     # Speech Whisper WER (MIT / Apache-2.0)
+#   pip install onnxruntime              # No-reference DNSMOS P.835 ONNX (MIT)
+#   pip install pedalboard               # Optional plugin-style artificial reverb (GPLv3 — eval only)

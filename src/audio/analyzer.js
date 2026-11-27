@@ -208,8 +208,43 @@ export function measureBS1770Loudness(channels, sampleRate) {
     });
   }
 
+  // 3) Loudness Range (LRA, EBU Tech 3342): 95th - 10th percentile of gated 3.0 s blocks
+  //    (falls back to 1.0 s blocks on very short clips < 3.5 s).
+  const lraWinSamples = Math.max(
+    1,
+    Math.round((durationSec >= 3.5 ? 3.0 : Math.min(1.0, Math.max(0.4, durationSec * 0.4))) * sampleRate)
+  );
+  const lraBlockPowers = [];
+  if (length >= lraWinSamples) {
+    for (let start = 0; start + lraWinSamples <= length; start += stHopSamples) {
+      lraBlockPowers.push((prefix[start + lraWinSamples] - prefix[start]) / lraWinSamples);
+    }
+  }
+  const lraAboveAbs = lraBlockPowers.filter((p) => p > absThresholdPower);
+  let lraLu = 0;
+  if (lraAboveAbs.length >= 2) {
+    let absPowerSum = 0;
+    for (let i = 0; i < lraAboveAbs.length; i++) absPowerSum += lraAboveAbs[i];
+    const lraMeanLufs = -0.691 + 10 * Math.log10(absPowerSum / lraAboveAbs.length);
+    // EBU Tech 3342 relative gate for LRA is -20 LU below ungated short-term mean
+    const lraRelThreshPower = Math.pow(10, (lraMeanLufs - 20 + 0.691) / 10);
+    const lraGatedLufs = [];
+    for (let i = 0; i < lraAboveAbs.length; i++) {
+      if (lraAboveAbs[i] > lraRelThreshPower) {
+        lraGatedLufs.push(-0.691 + 10 * Math.log10(lraAboveAbs[i]));
+      }
+    }
+    if (lraGatedLufs.length >= 2) {
+      lraGatedLufs.sort((a, b) => a - b);
+      const p10 = lraGatedLufs[Math.floor((lraGatedLufs.length - 1) * 0.1)];
+      const p95 = lraGatedLufs[Math.floor((lraGatedLufs.length - 1) * 0.95)];
+      lraLu = Math.max(0, p95 - p10);
+    }
+  }
+
   return {
     integratedLufs: Math.max(-70, integratedLufs),
+    lraLu,
     shortTermSeries,
     shortTermWindowSec,
   };
@@ -380,8 +415,8 @@ export function analyzeAudioBuffer(audioBuffer) {
   );
   const estimatedNoiseFloorDb = sortedFrames[p10Index];
 
-  // 3. ITU-R BS.1770-4 Loudness (Integrated LUFS + Short-Term Series)
-  const { integratedLufs, shortTermSeries, shortTermWindowSec } =
+  // 3. ITU-R BS.1770-4 Loudness (Integrated LUFS + Loudness Range LRA + Short-Term Series)
+  const { integratedLufs, lraLu, shortTermSeries, shortTermWindowSec } =
     measureBS1770Loudness(channels, sampleRate);
 
   // 4. Visual data (Waveform + Spectrogram)
@@ -401,6 +436,7 @@ export function analyzeAudioBuffer(audioBuffer) {
     truePeakDbtp,
     rmsDb,
     integratedLufs,
+    lraLu,
     silencePercent,
     clippedSamples,
     estimatedNoiseFloorDb,

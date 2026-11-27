@@ -52,9 +52,20 @@ export default function MetricsComparison({
   const orig = originalAnalysis;
   const proc = processedAnalysis;
   const vc = processingReport?.voiceClean || null;
+  const vi = processingReport?.voiceIsolation || null;
+  const dd = processingReport?.diffusionDereverb || null;
+  const humReport = vi?.humReport || vc?.humReport || processingReport?.humReport || null;
+  const adaptiveDenoiseStrength =
+    vc?.adaptiveDenoiseStrength ?? processingReport?.adaptiveDenoiseStrength ?? null;
+  const measuredSnrDb =
+    vi?.measuredSnrDb ?? vc?.measuredSnrDb ?? processingReport?.measuredSnrDb ?? null;
+  const activeLraRange = processingReport?.lraRange || options?.lraRange || null;
+  const lraWarning = processingReport?.lraWarning || null;
   const isLoudnessMatchedMode = Boolean(
     voiceCleanOptions?.enabled && voiceCleanOptions?.keepOriginalLoudness
   );
+  const targetToleranceLu =
+    processingReport?.loudnessTolerance ?? options?.loudnessTolerance ?? 1.2;
 
   const lufsStatus = (() => {
     if (!proc) return null;
@@ -65,11 +76,30 @@ export default function MetricsComparison({
         : { text: `Offset ${diff.toFixed(1)} LU`, tone: 'warn' };
     }
     if (options.normalizeEnabled && options.normalizeMode === 'lufs') {
-      return Math.abs(proc.integratedLufs - options.targetLoudness) <= 1.2
-        ? { text: 'On target', tone: 'good' }
-        : { text: 'Limited', tone: 'warn' };
+      const diff = Math.abs(proc.integratedLufs - options.targetLoudness);
+      return diff <= targetToleranceLu + 0.05
+        ? {
+            text:
+              targetToleranceLu <= 0.6
+                ? `On target (±${targetToleranceLu} LU)`
+                : 'On target',
+            tone: 'good',
+          }
+        : { text: `Offset ${diff.toFixed(1)} LU`, tone: 'warn' };
     }
     return null;
+  })();
+
+  const lraStatus = (() => {
+    if (!proc || !Number.isFinite(proc.lraLu) || !activeLraRange) return null;
+    const [minLra, maxLra] = activeLraRange;
+    if (proc.lraLu < minLra) {
+      return { text: `Low (<${minLra} LU)`, tone: 'warn' };
+    }
+    if (proc.lraLu > maxLra) {
+      return { text: `Wide (>${maxLra} LU)`, tone: 'warn' };
+    }
+    return { text: `In range (${minLra}–${maxLra} LU)`, tone: 'good' };
   })();
 
   const effectiveCeilingDbtp =
@@ -100,11 +130,26 @@ export default function MetricsComparison({
       label: 'Integrated loudness',
       note: isLoudnessMatchedMode
         ? 'ITU-R BS.1770-4 · Voice Clean loudness match (±0.5 LU)'
-        : 'ITU-R BS.1770-4 K-weighted & gated',
+        : options.loudnessTolerance
+          ? `ITU-R BS.1770-4 · target ${options.targetLoudness} LUFS (±${options.loudnessTolerance} LU)`
+          : 'ITU-R BS.1770-4 K-weighted & gated',
       before: `${fmtDb(orig.integratedLufs)} LUFS`,
       after: proc ? `${fmtDb(proc.integratedLufs)} LUFS` : 'Pending',
       delta: proc ? fmtDelta(orig.integratedLufs, proc.integratedLufs, ' LU', 1) : '—',
       status: lufsStatus,
+    },
+    {
+      label: 'Loudness range (LRA)',
+      note: activeLraRange
+        ? `EBU Tech 3342 dynamic spread · target ${activeLraRange[0]}–${activeLraRange[1]} LU`
+        : 'EBU Tech 3342 short-term loudness spread (p95 − p10)',
+      before: Number.isFinite(orig.lraLu) ? `${orig.lraLu.toFixed(1)} LU` : '—',
+      after: proc && Number.isFinite(proc.lraLu) ? `${proc.lraLu.toFixed(1)} LU` : 'Pending',
+      delta:
+        proc && Number.isFinite(orig.lraLu) && Number.isFinite(proc.lraLu)
+          ? fmtDelta(orig.lraLu, proc.lraLu, ' LU', 1)
+          : '—',
+      status: lraStatus,
     },
     {
       label: 'RMS level',
@@ -283,24 +328,68 @@ export default function MetricsComparison({
         </table>
       </div>
 
-      {/* Voice Clean Report & Warnings Footer */}
-      {vc && (
+      {/* Voice Clean / Voice Target / Voice Isolation / Diffusion Dereverb Diagnostics Footer */}
+      {(dd || vc || vi || humReport || adaptiveDenoiseStrength != null || lraWarning) && (
         <div className="px-4 py-3 border-t border-[var(--border)] bg-[var(--surface-2)] space-y-2 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-semibold text-[var(--text)]">Voice Clean Report</span>
+            <span className="font-semibold text-[var(--text)]">
+              {dd
+                ? 'Diffusion Dereverb Report (Saito et al. 2023)'
+                : vi
+                  ? 'Voice Isolation Report'
+                  : adaptiveDenoiseStrength != null
+                    ? 'Voice Target Diagnostics'
+                    : 'Voice Clean Report'}
+            </span>
             <span className="font-mono tabular-nums text-[11px] text-[var(--text-subtle)]">
-              Denoiser: {vc.usedAiDenoise ? 'AI (DeepFilterNet3 WASM)' : 'Spectral STFT (2048-pt)'}{' '}
-              · Profile:{' '}
-              {vc.noiseSource === 'selected-region' ? 'Selected region' : 'Auto quietest 10%'}
+              {dd
+                ? `Mode: ${dd.mode} · Device: ${dd.device || 'remote'} · ${dd.elapsed_sec ?? dd.roundTripSec} s (${
+                    dd.sec_per_minute_audio != null ? `${dd.sec_per_minute_audio} s/min` : 'direct upload'
+                  }) · Windows: ${dd.num_windows ?? 1}`
+                : vi
+                  ? `${vi.usedAiBoost ? 'DeepFilterNet3 + ' : ''}Center ${
+                      vi.stereoCenterApplied ? `ON (${vi.centerFocus}%)` : 'Auto-skipped'
+                    } · Speech ${vi.speechActivityPct}% · Strength ${vi.isolationStrength}%`
+                  : vc
+                    ? `Denoiser: ${vc.usedAiDenoise ? 'AI (DeepFilterNet3 WASM)' : 'Spectral STFT (2048-pt)'}`
+                    : 'Engine: Current DSP'}
+              {!dd && !vi && adaptiveDenoiseStrength != null && measuredSnrDb != null
+                ? ` · SNR ${measuredSnrDb.toFixed(1)} dB → ${Math.round(adaptiveDenoiseStrength * 100)}%`
+                : !dd && !vi && vc
+                  ? ` · Profile: ${vc.noiseSource === 'selected-region' ? 'Selected region' : 'Auto quietest 10%'}`
+                  : ''}
+              {!dd && humReport
+                ? humReport.detected
+                  ? ` · Hum notched: ${humReport.mainsHz} Hz (${humReport.harmonicsNotched.join('/')} Hz)`
+                  : ' · Hum: none detected'
+                : ''}
             </span>
           </div>
-          {vc.warnings && vc.warnings.length > 0 && (
+          {(dd?.cpu_warning ||
+            (vc?.warnings && vc.warnings.length > 0) ||
+            (vi?.warnings && vi.warnings.length > 0) ||
+            lraWarning) && (
             <ul className="space-y-1 text-[var(--status-warn)]">
-              {vc.warnings.map((w, idx) => (
-                <li key={idx} className="leading-snug">
+              {dd?.cpu_warning && (
+                <li key="dd-cpu" className="leading-snug">
+                  • {dd.cpu_warning}
+                </li>
+              )}
+              {vi?.warnings?.map((w, idx) => (
+                <li key={`vi-${idx}`} className="leading-snug">
                   • {w}
                 </li>
               ))}
+              {vc?.warnings?.map((w, idx) => (
+                <li key={`vc-${idx}`} className="leading-snug">
+                  • {w}
+                </li>
+              ))}
+              {lraWarning && (
+                <li key="lra-warn" className="leading-snug">
+                  • {lraWarning}
+                </li>
+              )}
             </ul>
           )}
         </div>

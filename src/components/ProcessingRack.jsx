@@ -1,6 +1,7 @@
-import React from 'react';
-import { SlidersHorizontal, Play, RotateCcw, Cpu, Sparkles, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { SlidersHorizontal, Play, RotateCcw, Cpu, Sparkles, Mic2, X, Server } from 'lucide-react';
 import { LOUDNESS_PRESETS, PRESETS } from '../audio/processor.js';
+import { checkDereverbHealth } from '../audio/diffusionDereverbClient.js';
 import { VOICE_CLEAN_PRESETS } from '../audio/voiceCleanCore.js';
 import { ENABLE_AI_DENOISER } from '../audio/aiDenoiser.js';
 
@@ -89,9 +90,13 @@ export default function ProcessingRack({
   onChangeEngine,
   dfOptions,
   onChangeDfOption,
+  diffusionDereverbOptions,
+  onChangeDiffusionDereverbOption,
   voiceCleanOptions,
   onChangeVoiceCleanOption,
   onApplyVoiceCleanPreset,
+  voiceIsolationOptions,
+  onChangeVoiceIsolationOption,
   noiseRegion,
   isSelectingNoise,
   onToggleSelectingNoise,
@@ -107,9 +112,38 @@ export default function ProcessingRack({
   hasAudio,
   processingReport,
 }) {
+  const [healthState, setHealthState] = useState(null); // { ok, text } | null
+  const [checkingHealth, setCheckingHealth] = useState(false);
+
   const isDeepFilter = processingEngine === 'deepfilternet';
-  const showMasteringStages = !isDeepFilter || dfOptions.chainMastering;
+  const isDiffusionDereverb = processingEngine === 'diffusion-dereverb';
+  const showMasteringStages = isDiffusionDereverb
+    ? Boolean(diffusionDereverbOptions?.chainMastering)
+    : !isDeepFilter || dfOptions.chainMastering;
   const vcEnabled = Boolean(voiceCleanOptions?.enabled);
+  const isoEnabled = Boolean(voiceIsolationOptions?.enabled);
+
+  const handleTestDereverbServer = async () => {
+    setCheckingHealth(true);
+    setHealthState(null);
+    try {
+      const info = await checkDereverbHealth(diffusionDereverbOptions?.apiUrl);
+      const ckptMsg = info.checkpoint_loaded
+        ? `Prior loaded (${info.checkpoint_name || 'checkpoint'})`
+        : 'No checkpoint loaded (WPE baseline ready)';
+      setHealthState({
+        ok: true,
+        text: `${info.cuda_available ? 'CUDA GPU' : 'CPU'} · ${ckptMsg} · Max ${info.max_upload_mb} MB`,
+      });
+    } catch (err) {
+      setHealthState({
+        ok: false,
+        text: err?.message || 'Server unreachable',
+      });
+    } finally {
+      setCheckingHealth(false);
+    }
+  };
 
   return (
     <aside
@@ -136,7 +170,7 @@ export default function ProcessingRack({
           </button>
         </div>
 
-        {/* Engine Selector: Current DSP vs DeepFilterNet3 */}
+        {/* Engine Selector: Current DSP vs DeepFilterNet3 vs Diffusion Dereverb */}
         <div>
           <p className="text-[11px] font-mono uppercase tracking-wider text-[var(--text-subtle)] mb-1.5">
             Processing engine
@@ -144,13 +178,13 @@ export default function ProcessingRack({
           <div
             role="group"
             aria-label="Processing engine"
-            className="grid grid-cols-2 gap-1 p-1 bg-[var(--surface-2)] border border-[var(--border)]"
+            className="grid grid-cols-3 gap-1 p-1 bg-[var(--surface-2)] border border-[var(--border)]"
           >
             <button
               type="button"
               onClick={() => onChangeEngine('dsp')}
-              className={`px-2.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap truncate cursor-pointer ${
-                !isDeepFilter
+              className={`px-2 py-1.5 text-[11px] font-medium transition-colors whitespace-nowrap truncate cursor-pointer ${
+                !isDeepFilter && !isDiffusionDereverb
                   ? 'bg-[var(--surface)] text-[var(--text)] border border-[var(--border-hover)]'
                   : 'text-[var(--text-muted)] hover:text-[var(--text)] border border-transparent'
               }`}
@@ -160,7 +194,7 @@ export default function ProcessingRack({
             <button
               type="button"
               onClick={() => onChangeEngine('deepfilternet')}
-              className={`px-2.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap truncate cursor-pointer ${
+              className={`px-2 py-1.5 text-[11px] font-medium transition-colors whitespace-nowrap truncate cursor-pointer ${
                 isDeepFilter
                   ? 'bg-[var(--accent-muted)] text-[var(--accent)] border border-[var(--accent-border)]'
                   : 'text-[var(--text-muted)] hover:text-[var(--text)] border border-transparent'
@@ -168,13 +202,144 @@ export default function ProcessingRack({
             >
               DeepFilterNet3
             </button>
+            <button
+              type="button"
+              onClick={() => onChangeEngine('diffusion-dereverb')}
+              className={`px-2 py-1.5 text-[11px] font-medium transition-colors whitespace-nowrap truncate cursor-pointer ${
+                isDiffusionDereverb
+                  ? 'bg-[var(--accent-muted)] text-[var(--accent)] border border-[var(--accent-border)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)] border border-transparent'
+              }`}
+              title="Saito et al. (ICASSP 2023) Diffusion + DDRM + WPE Refinement via external FastAPI GPU server"
+            >
+              Diffusion
+            </button>
           </div>
           <p className="text-xs text-[var(--text-subtle)] mt-1.5">
-            {isDeepFilter
-              ? '48 kHz neural speech denoiser (WASM) — removes noise even during speech'
-              : 'Classic 6-stage deterministic Web Audio DSP mastering pipeline'}
+            {isDiffusionDereverb
+              ? 'Saito et al. (2023) DDRM + WPE refinement — uploads directly to your FastAPI GPU service'
+              : isDeepFilter
+                ? '48 kHz neural speech denoiser (WASM) — removes noise even during speech'
+                : 'Classic 6-stage deterministic Web Audio DSP mastering pipeline'}
           </p>
         </div>
+
+        {/* Diffusion Dereverb (Saito et al., ICASSP 2023) Direct FastAPI GPU Controls */}
+        {isDiffusionDereverb && diffusionDereverbOptions && (
+          <div className="pt-3 border-t border-[var(--border)] space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text)]">
+                <Server className="w-3.5 h-3.5 text-[var(--accent)]" />
+                Diffusion Dereverb (Saito 2023)
+              </div>
+              <span className="text-[11px] font-mono text-[var(--accent)]">Direct API</span>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor="dereverb-api-url"
+                  className="text-xs text-[var(--text-muted)]"
+                >
+                  FastAPI endpoint URL
+                </label>
+                <button
+                  type="button"
+                  disabled={checkingHealth || !diffusionDereverbOptions.apiUrl}
+                  onClick={handleTestDereverbServer}
+                  className="text-[11px] font-mono text-[var(--accent)] hover:underline cursor-pointer disabled:opacity-40"
+                >
+                  {checkingHealth ? 'Checking...' : 'Test /health'}
+                </button>
+              </div>
+              <input
+                id="dereverb-api-url"
+                type="url"
+                placeholder="http://localhost:8000"
+                value={diffusionDereverbOptions.apiUrl}
+                onChange={(e) =>
+                  onChangeDiffusionDereverbOption?.('apiUrl', e.target.value)
+                }
+                className="w-full px-2.5 py-1.5 text-xs font-mono bg-[var(--surface-2)] border border-[var(--border-hover)] text-[var(--text)] placeholder:text-[var(--text-subtle)] focus:outline-none focus:border-[var(--accent)]"
+              />
+              {healthState && (
+                <p
+                  className="text-[11px] font-mono leading-snug"
+                  style={{
+                    color: healthState.ok ? 'var(--status-good)' : 'var(--status-error)',
+                  }}
+                >
+                  {healthState.text}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="dereverb-mode" className="text-xs text-[var(--text-muted)] block">
+                Algorithm 1 mode
+              </label>
+              <select
+                id="dereverb-mode"
+                value={diffusionDereverbOptions.mode}
+                onChange={(e) =>
+                  onChangeDiffusionDereverbOption?.('mode', e.target.value)
+                }
+                className="w-full px-2.5 py-1.5 text-xs border border-[var(--border-hover)] bg-[var(--surface-2)] text-[var(--text)] cursor-pointer"
+              >
+                <option value="fast">Fast (DDRM 10 steps + 500 refine)</option>
+                <option value="proposed">Full Paper (DDRM 20 steps + 10K refine)</option>
+                <option value="no_refine">No Refinement (DDRM pass 1 only)</option>
+                <option value="wpe_baseline">WPE Baseline (L=200, D=8, 3 iters · no ckpt)</option>
+              </select>
+            </div>
+
+            <SliderField
+              id="dereverb-dry-mix"
+              label="Dry/wet blend (natural voice)"
+              value={Math.round((diffusionDereverbOptions.dryMix ?? 0.15) * 100)}
+              displayValue={`${Math.round((diffusionDereverbOptions.dryMix ?? 0.15) * 100)}%`}
+              min={0}
+              max={35}
+              step={1}
+              disabled={false}
+              onChange={(val) =>
+                onChangeDiffusionDereverbOption?.('dryMix', val / 100)
+              }
+            />
+
+            <label className="flex items-start gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={diffusionDereverbOptions.matchLoudness !== false}
+                onChange={(e) =>
+                  onChangeDiffusionDereverbOption?.('matchLoudness', e.target.checked)
+                }
+                className="mt-0.5 w-3.5 h-3.5 accent-[var(--accent)] cursor-pointer"
+              />
+              <span className="text-xs text-[var(--text-muted)] leading-snug">
+                Match input loudness (±0.5 LU) &amp; -1.5 dBTP limiter
+              </span>
+            </label>
+
+            <label className="flex items-start gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={Boolean(diffusionDereverbOptions.chainMastering)}
+                onChange={(e) =>
+                  onChangeDiffusionDereverbOption?.('chainMastering', e.target.checked)
+                }
+                className="mt-0.5 w-3.5 h-3.5 accent-[var(--accent)] cursor-pointer"
+              />
+              <span className="text-xs text-[var(--text-muted)] leading-snug">
+                Follow with local mastering stages (EQ, Leveler, LUFS Norm)
+              </span>
+            </label>
+
+            <p className="text-[11px] text-[var(--text-subtle)] leading-snug">
+              Browser uploads WAV directly to <span className="font-mono">POST /dereverb</span> (bypasses Vercel&apos;s 4.5 MB limit). Singing-vocal checkpoints differ from speech; use WPE Baseline if no checkpoint is loaded.
+            </p>
+          </div>
+        )}
 
         {/* DeepFilterNet3 Neural Controls (when DeepFilterNet3 engine is active) */}
         {isDeepFilter && (
@@ -232,12 +397,14 @@ export default function ProcessingRack({
         )}
 
         {/* One-click mastering presets */}
-        <div className={isDeepFilter ? 'pt-3 border-t border-[var(--border)]' : ''}>
+        <div className={isDeepFilter || isDiffusionDereverb ? 'pt-3 border-t border-[var(--border)]' : ''}>
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <p className="text-[11px] font-mono uppercase tracking-wider text-[var(--text-subtle)]">
               One-click presets
             </p>
-            <span className="text-[11px] font-mono text-[var(--text-subtle)]">6 profiles</span>
+            <span className="text-[11px] font-mono text-[var(--text-subtle)]">
+              {Object.keys(PRESETS).length} profiles
+            </span>
           </div>
           <div
             role="group"
@@ -326,15 +493,29 @@ export default function ProcessingRack({
 
             <SliderField
               id="vc-noise"
-              label="Noise reduction"
+              label={
+                voiceCleanOptions.adaptiveDenoise
+                  ? 'Noise reduction (Auto SNR)'
+                  : 'Noise reduction'
+              }
               value={voiceCleanOptions.noiseReduction}
-              displayValue={`${voiceCleanOptions.noiseReduction}%`}
+              displayValue={
+                voiceCleanOptions.adaptiveDenoise
+                  ? 'Auto (SNR)'
+                  : `${voiceCleanOptions.noiseReduction}%`
+              }
               min={0}
               max={100}
               step={1}
               disabled={!vcEnabled}
               onChange={(val) => onChangeVoiceCleanOption('noiseReduction', val)}
             />
+
+            {voiceCleanOptions.humDetect && (
+              <p className="text-[11px] font-mono text-[var(--accent)]">
+                50/60 Hz hum detector active (up to 4 harmonics)
+              </p>
+            )}
 
             <SliderField
               id="vc-reverb"
@@ -430,6 +611,120 @@ export default function ProcessingRack({
         </div>
       )}
 
+      {/* Dedicated Foreground Voice Isolation Section (Web Worker DSP) */}
+      {voiceIsolationOptions && (
+        <div
+          className={`px-4 py-3.5 border-b border-[var(--border)] space-y-3 ${
+            isoEnabled ? 'bg-[var(--accent-muted)]' : 'bg-[var(--surface)]'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <label className="flex items-start gap-2.5 cursor-pointer select-none min-w-0">
+              <input
+                type="checkbox"
+                checked={isoEnabled}
+                onChange={(e) => onChangeVoiceIsolationOption?.('enabled', e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-[var(--accent)] cursor-pointer"
+              />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-sm font-bold text-[var(--text)] leading-snug">
+                  <Mic2 className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
+                  <span>Voice Isolation</span>
+                </div>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  Stereo center-voice extraction, harmonic speech masking &amp; vocal band focus
+                </p>
+              </div>
+            </label>
+            <span className="text-[11px] font-mono text-[var(--accent)] whitespace-nowrap shrink-0 mt-0.5">
+              {isoEnabled ? 'Active' : 'Bypass'}
+            </span>
+          </div>
+
+          {isoEnabled && (
+            <div className="pl-6.5 space-y-3">
+              <SliderField
+                id="vi-strength"
+                label="Isolation strength"
+                value={voiceIsolationOptions.isolationStrength}
+                displayValue={`${voiceIsolationOptions.isolationStrength}%`}
+                min={0}
+                max={100}
+                step={5}
+                disabled={!isoEnabled}
+                onChange={(val) => onChangeVoiceIsolationOption?.('isolationStrength', val)}
+              />
+
+              <SliderField
+                id="vi-center"
+                label="Stereo center focus"
+                value={voiceIsolationOptions.centerFocus}
+                displayValue={`${voiceIsolationOptions.centerFocus}%`}
+                min={0}
+                max={100}
+                step={5}
+                disabled={!isoEnabled}
+                onChange={(val) => onChangeVoiceIsolationOption?.('centerFocus', val)}
+              />
+
+              <SliderField
+                id="vi-bg-atten"
+                label="Background attenuation"
+                value={voiceIsolationOptions.backgroundAttenuationDb}
+                displayValue={`-${voiceIsolationOptions.backgroundAttenuationDb} dB`}
+                min={10}
+                max={36}
+                step={2}
+                disabled={!isoEnabled}
+                onChange={(val) => onChangeVoiceIsolationOption?.('backgroundAttenuationDb', val)}
+              />
+
+              <SliderField
+                id="vi-dry-blend"
+                label="Natural voice blend"
+                value={voiceIsolationOptions.naturalBlend}
+                displayValue={`${voiceIsolationOptions.naturalBlend}%`}
+                min={0}
+                max={30}
+                step={1}
+                disabled={!isoEnabled}
+                onChange={(val) => onChangeVoiceIsolationOption?.('naturalBlend', val)}
+              />
+
+              <label className="flex items-start gap-2 cursor-pointer select-none pt-0.5">
+                <input
+                  type="checkbox"
+                  checked={voiceIsolationOptions.vocalBandFocus !== false}
+                  onChange={(e) =>
+                    onChangeVoiceIsolationOption?.('vocalBandFocus', e.target.checked)
+                  }
+                  className="mt-0.5 w-3.5 h-3.5 accent-[var(--accent)] cursor-pointer"
+                />
+                <span className="text-xs text-[var(--text-secondary)] leading-snug">
+                  Vocal band focus (85 Hz–11.5 kHz + 50/60 Hz hum notch)
+                </span>
+              </label>
+
+              {ENABLE_AI_DENOISER && (
+                <label className="flex items-start gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(voiceIsolationOptions.useAiBoost)}
+                    onChange={(e) =>
+                      onChangeVoiceIsolationOption?.('useAiBoost', e.target.checked)
+                    }
+                    className="mt-0.5 w-3.5 h-3.5 accent-[var(--accent)] cursor-pointer"
+                  />
+                  <span className="text-xs text-[var(--text-secondary)] leading-snug">
+                    AI neural boost (DeepFilterNet3 pre-stage)
+                  </span>
+                </label>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Ordered DSP Stages (a through f) */}
       {showMasteringStages ? (
         <div className="px-4 py-1">
@@ -455,16 +750,29 @@ export default function ProcessingRack({
           </StageSection>
 
           {/* Stage b: Noise reduction */}
-          {isDeepFilter || vcEnabled ? (
+          {isDeepFilter || vcEnabled || isoEnabled ? (
             <div className="py-3 border-b border-[var(--border)] flex items-center justify-between gap-2 text-xs text-[var(--text-muted)]">
               <div>
                 <span className="font-mono text-[var(--accent)] mr-1.5">b.</span>
                 <span className="font-medium text-[var(--text-secondary)]">
-                  Noise Reduction handled by {vcEnabled ? 'Voice Clean' : 'DeepFilterNet3'}
+                  Noise Reduction handled by{' '}
+                  {isoEnabled
+                    ? 'Voice Isolation'
+                    : vcEnabled
+                      ? 'Voice Clean'
+                      : 'DeepFilterNet3'}
                 </span>
               </div>
               <span className="font-mono text-[11px] text-[var(--accent)] shrink-0">
-                {vcEnabled ? (voiceCleanOptions.useAiDenoise ? 'AI Worker' : 'Worker STFT') : 'Neural'}
+                {isoEnabled
+                  ? voiceIsolationOptions.useAiBoost
+                    ? 'AI + Isolation'
+                    : 'Worker Isolation'
+                  : vcEnabled
+                    ? voiceCleanOptions.useAiDenoise
+                      ? 'AI Worker'
+                      : 'Worker STFT'
+                    : 'Neural'}
               </span>
             </div>
           ) : (
@@ -537,8 +845,12 @@ export default function ProcessingRack({
           {/* Studio Voice Clarity EQ & De-Esser */}
           <StageSection
             indexLabel="+"
-            title="Voice Clarity EQ & De-Esser"
-            subtitle="Cuts 260 Hz mud, adds balanced clarity & softens sibilance"
+            title="Voice Clarity Auto-EQ & De-Esser"
+            subtitle={
+              options.autoEqMaxAdjustDb
+                ? `Adaptive EQ capped at ±${options.autoEqMaxAdjustDb} dB + gentle split-band de-esser`
+                : 'Cuts 260 Hz mud, adds balanced clarity & softens sibilance'
+            }
             checked={Boolean(options.voiceClarityEnabled)}
             onToggle={(val) => onChangeOption('voiceClarityEnabled', val)}
           >
@@ -641,7 +953,11 @@ export default function ProcessingRack({
           <StageSection
             indexLabel="d."
             title="Auto-Leveler"
-            subtitle="0.5 s speech windows ride gain without boosting silence"
+            subtitle={
+              options.levelerMaxGainDb
+                ? `Gentle speech windows · capped at ±${options.levelerMaxGainDb} dB max gain`
+                : '0.5 s speech windows ride gain without boosting silence'
+            }
             checked={options.levelerEnabled}
             onToggle={(val) => onChangeOption('levelerEnabled', val)}
           >
@@ -766,9 +1082,9 @@ export default function ProcessingRack({
         </div>
       ) : (
         <div className="px-4 py-4 text-xs text-[var(--text-muted)] leading-relaxed">
-          Pure DeepFilterNet3 mode active — outputs raw neural speech enhancement without
-          additional compression, leveling, or loudness normalization so you can compare neural
-          denoising directly against the original recording.
+          {isDiffusionDereverb
+            ? 'Pure Diffusion Dereverb mode active — outputs loudness-matched dereverbed audio directly from your FastAPI GPU service so you can A/B audition dereverberation without extra compression or EQ.'
+            : 'Pure DeepFilterNet3 mode active — outputs raw neural speech enhancement without additional compression, leveling, or loudness normalization so you can compare neural denoising directly against the original recording.'}
         </div>
       )}
 
@@ -783,9 +1099,11 @@ export default function ProcessingRack({
           <Play className="w-3.5 h-3.5 fill-current" />
           {isProcessing
             ? 'Processing...'
-            : isDeepFilter
-              ? 'Process with DeepFilterNet3'
-              : 'Process Audio'}
+            : isDiffusionDereverb
+              ? 'Run Diffusion Dereverb'
+              : isDeepFilter
+                ? 'Process with DeepFilterNet3'
+                : 'Process Audio'}
         </button>
 
         {isProcessing && (
